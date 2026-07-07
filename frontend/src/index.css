@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+/* Tailwind v4 native theme configuration */
+@theme {
+  --color-axis-burgundy: #861F41;
+  --color-axis-burgundy-hover: #701835;
+  --color-axis-burgundy-light: #F5E6EB;
+  --color-axis-burgundy-dark: #4D1225;
+  --color-axis-grey: #f5f6f8;
+  --color-axis-grey-dark: #111827;
+}
+
+/* Native CSS transitions for Light/Dark mode changes */
+body {
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 200ms;
+}

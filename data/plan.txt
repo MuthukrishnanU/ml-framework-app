@@ -1,0 +1,16 @@
+This app is working well so far, but I need some enhancements:
+(1) A Global loader for every API call - basically display a loader whenever a API call is made and hide the loader when the API call returns (success or failure)..
+(2) Can we call the fetchDashboardData method in App.tsx file (/api/models and /api/monitoring/drift endpoints) only when a user clicks on a refresh button in the Leaderboard tab? Currently the app is calling these endpoints as soon as the app loads.
+(3) Keep the code to make the fetchDashboardData calls every 5 seconds commented (in case our clients want this feature back, we can uncomment the same).
+(4) Add a new tab to view all the tables' data - there should be a dropdown with all the tables (demographics, credit_card_history, investment_profiles, loan_details, predictions). On selecting any particular table name we must be able to see all the records (all the columns) with pagination of 100 records per page.
+(5) Add a new tab to see the strong customers for each product - there should be a dropdown with the table names (credit_card_history, investment_profiles, loan_details). On selecting any particular table name we must get the list of strong customers for that particular product and their necessary details in a tabular format with pagination of 100 records per page.
+Please provide code changes for the same.
+
+In the "Table Explorer" and "Target Leads" tabs, can we implement a smart search box?
+User can enter any string (e.g. CUST00001 or Mumbai or 28 or Co-Living etc) and we must fetch all the records which contain the search string (in any of the columns) from that selected table.
+Please confirm if this is possible?
+
+Ok, can we make this training on demand or as per user choice specific to a campaign?
+I mean, in a new tab we can show a form containing a multi-select dropdown field with list of all the available models/algorithms and another single-select dropdown field showing the campaigns "Credit Card, Mutual Funds/Investments, Loans".
+Once user selects their choice of models/algorithms and the campaign, on click of a submit button, the re-training must happen and the model-scoreboard as well as the campaign lead targets must be displayed in separate tables/sections below the form.
+Please confirm if this is possible
