@@ -1,6 +1,9 @@
 # Use official Python image
 FROM python:3.10-slim
 
+# Force stdout/stderr to be unbuffered
+ENV PYTHONUNBUFFERED=1
+
 # Set working directory inside the container
 WORKDIR /app
 

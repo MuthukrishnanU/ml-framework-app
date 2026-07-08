@@ -36,12 +36,16 @@ class ScoreRequest(BaseModel):
 
 @app.on_event("startup")
 def startup_event():
-    # Warm up and train the models on startup
+    # Warm up and train the models on startup in a background thread 
+    # to prevent blocking the port binding health checks
+    import threading
     try:
         from backend.router import train_and_cache_all_models
-        train_and_cache_all_models()
+        thread = threading.Thread(target=train_and_cache_all_models, daemon=True)
+        thread.start()
     except Exception as e:
-        print(f"Error training models on startup: {e}")
+        print(f"Error starting model training thread on startup: {e}")
+
 
 @app.post("/api/auth/login")
 def login(payload: LoginRequest):
