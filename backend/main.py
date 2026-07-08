@@ -438,6 +438,42 @@ def step_simulation(payload: dict = Body(...)):
         if conn:
             release_db_connection(conn)
 
+@app.get("/api/db/semantic_metadata")
+def get_semantic_metadata_endpoint():
+    """Queries and returns all rows from the semantic_metadata table."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 
+                    meta_id, table_name, column_name, data_type, 
+                    is_primary_key, is_foreign_key, referenced_table, referenced_column, 
+                    business_definition, semantic_category, is_null, default_value, 
+                    data_sensitivity, source_system, validation_rules
+                FROM semantic_metadata
+                ORDER BY table_name, column_name;
+            """)
+            rows = cur.fetchall()
+            
+            columns = [
+                "meta_id", "table_name", "column_name", "data_type", 
+                "is_primary_key", "is_foreign_key", "referenced_table", "referenced_column", 
+                "business_definition", "semantic_category", "is_null", "default_value", 
+                "data_sensitivity", "source_system", "validation_rules"
+            ]
+            
+            result = []
+            for r in rows:
+                result.append(dict(zip(columns, r)))
+                
+            return {"data": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            release_db_connection(conn)
+
 @app.get("/api/db/table")
 def get_db_table(table_name: str, page: int = 1, page_size: int = 100, search: str = "", sort_by: str = "", sort_order: str = "asc"):
     import decimal

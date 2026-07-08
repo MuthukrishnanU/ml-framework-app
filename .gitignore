@@ -1,0 +1,2 @@
+# Ignore CatBoost training outputs and telemetry
+catboost_info/
