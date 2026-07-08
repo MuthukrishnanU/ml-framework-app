@@ -27,6 +27,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/")
+def read_root():
+    return {"status": "healthy", "service": "Self-Healing ML Framework Backend API"}
+
 class LoginRequest(BaseModel):
     username: str
     password: str
