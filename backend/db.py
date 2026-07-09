@@ -240,6 +240,36 @@ def init_db():
         if conn:
             release_db_connection(conn)
 
+def init_observability_db():
+    """Initializes the API audit logs database table dynamically on startup."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS api_audit_logs (
+                log_id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                username VARCHAR(100),
+                user_role VARCHAR(50),
+                endpoint VARCHAR(255),
+                method VARCHAR(10),
+                status_code INT,
+                latency_ms NUMERIC(10, 2),
+                payload_summary TEXT,
+                client_ip VARCHAR(50)
+            );
+        """)
+        conn.commit()
+        print("Observability logs database initialized successfully (IF NOT EXISTS).")
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print(f"Error initializing observability logs database: {e}")
+    finally:
+        if conn:
+            release_db_connection(conn)
+
 if __name__ == "__main__":
     # Test initialization
     try:

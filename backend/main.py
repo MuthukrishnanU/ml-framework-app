@@ -8,13 +8,15 @@ from pydantic import BaseModel
 import pandas as pd
 import numpy as np
 
-from backend.db import get_db_connection, release_db_connection
+from backend.db import get_db_connection, release_db_connection, init_observability_db
 from backend.registry import (
     load_registry, save_registry, get_active_champion_id, 
     set_active_champion_id, get_failover_mode, set_failover_mode, log_audit
 )
 from backend.router import score_customer, get_trained_model, FEATURES
 from backend.monitoring import calculate_psi, calculate_ks_distance
+import time
+from fastapi import Request
 
 app = FastAPI(title="Self-Healing ML Framework API")
 
@@ -26,6 +28,68 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+async def set_body(request: Request, body: bytes):
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+    request._receive = receive
+
+@app.middleware("http")
+async def log_requests_middleware(request: Request, call_next):
+    start_time = time.time()
+    
+    # Capture telemetry headers
+    username = request.headers.get("X-User-Name", "anonymous")
+    role = request.headers.get("X-User-Role", "guest")
+    endpoint = request.url.path
+    method = request.method
+    client_ip = request.client.host if request.client else "unknown"
+    
+    # Safely retrieve body payload summary
+    payload_summary = ""
+    if method in ["POST", "PUT"]:
+        try:
+            body_bytes = await request.body()
+            await set_body(request, body_bytes)
+            
+            import json
+            body_json = json.loads(body_bytes.decode('utf-8'))
+            if isinstance(body_json, dict):
+                if "password" in body_json:
+                    body_json["password"] = "********"
+                payload_summary = json.dumps(body_json)
+        except Exception:
+            pass
+            
+    response = await call_next(request)
+    
+    process_time_ms = (time.time() - start_time) * 1000.0
+    status_code = response.status_code
+    
+    # Exclude logs check paths or static resources to prevent loop recursion
+    ignored_paths = ["/favicon.ico", "/api/observability/logs", "/"]
+    if endpoint not in ignored_paths and not endpoint.startswith("/static"):
+        import threading
+        def save_log():
+            conn = None
+            try:
+                conn = get_db_connection()
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT INTO api_audit_logs (
+                        username, user_role, endpoint, method, status_code, latency_ms, payload_summary, client_ip
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
+                """, (username, role, endpoint, method, status_code, process_time_ms, payload_summary, client_ip))
+                conn.commit()
+            except Exception as e:
+                print(f"Error saving audit log to Neon: {e}")
+            finally:
+                if conn:
+                    release_db_connection(conn)
+                    
+        threading.Thread(target=save_log, daemon=True).start()
+        
+    return response
 
 @app.get("/")
 def read_root():
@@ -40,6 +104,12 @@ class ScoreRequest(BaseModel):
 
 @app.on_event("startup")
 def startup_event():
+    # Dynamically bootstrap the observability table on start
+    try:
+        init_observability_db()
+    except Exception as e:
+        print(f"Error initializing observability logs table on startup: {e}")
+        
     # Warm up and train the models on startup in a background thread 
     # to prevent blocking the port binding health checks
     import threading
@@ -767,6 +837,82 @@ def post_ml_train_on_demand(req: RetrainRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/observability/logs")
+def get_observability_logs(page: int = 1, page_size: int = 100, search: str = ""):
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        search_clause = ""
+        params = []
+        if search.strip():
+            search_clause = """
+                WHERE username ILIKE %s OR 
+                      user_role ILIKE %s OR 
+                      endpoint ILIKE %s OR 
+                      method ILIKE %s OR 
+                      status_code::text ILIKE %s OR 
+                      payload_summary ILIKE %s
+            """
+            s_val = f"%{search.strip()}%"
+            params = [s_val] * 6
+            
+        # 1. Total records count
+        cur.execute(f"SELECT COUNT(*) FROM api_audit_logs {search_clause};", params)
+        total = cur.fetchone()[0]
+        
+        # 2. Paginated rows ordered by latest timestamp
+        offset = (page - 1) * page_size
+        query = f"""
+            SELECT log_id, timestamp, username, user_role, endpoint, method, status_code, latency_ms, payload_summary, client_ip
+            FROM api_audit_logs
+            {search_clause}
+            ORDER BY timestamp DESC
+            LIMIT {page_size} OFFSET {offset};
+        """
+        cur.execute(query, params)
+        rows = cur.fetchall()
+        
+        columns = ["log_id", "timestamp", "username", "user_role", "endpoint", "method", "status_code", "latency_ms", "payload_summary", "client_ip"]
+        logs_list = []
+        for r in rows:
+            row_dict = dict(zip(columns, r))
+            if row_dict["timestamp"]:
+                row_dict["timestamp"] = row_dict["timestamp"].isoformat() + "Z"
+            if row_dict["latency_ms"]:
+                row_dict["latency_ms"] = float(row_dict["latency_ms"])
+            logs_list.append(row_dict)
+            
+        # 3. Observability telemetry aggregates
+        cur.execute("""
+            SELECT 
+                COUNT(*),
+                AVG(latency_ms),
+                SUM(CASE WHEN status_code >= 200 AND status_code < 300 THEN 1 ELSE 0 END)::float / GREATEST(1, COUNT(*))
+            FROM api_audit_logs;
+        """)
+        agg = cur.fetchone()
+        metrics = {
+            "total_requests": int(agg[0] or 0),
+            "avg_latency_ms": round(float(agg[1] or 0.0), 2),
+            "success_rate": round(float(agg[2] or 0.0) * 100.0, 2)
+        }
+        
+        return {
+            "data": logs_list,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "metrics": metrics
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            release_db_connection(conn)
 
 
 # Serve static frontend files if built (production mode)
