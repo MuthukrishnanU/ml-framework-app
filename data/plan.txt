@@ -1,3 +1,5 @@
+ToDo08Jul26:
+
 This app is working well so far, but I need some enhancements:
 (1) A Global loader for every API call - basically display a loader whenever a API call is made and hide the loader when the API call returns (success or failure)..
 (2) Can we call the fetchDashboardData method in App.tsx file (/api/models and /api/monitoring/drift endpoints) only when a user clicks on a refresh button in the Leaderboard tab? Currently the app is calling these endpoints as soon as the app loads.
@@ -14,3 +16,11 @@ Ok, can we make this training on demand or as per user choice specific to a camp
 I mean, in a new tab we can show a form containing a multi-select dropdown field with list of all the available models/algorithms and another single-select dropdown field showing the campaigns "Credit Card, Mutual Funds/Investments, Loans".
 Once user selects their choice of models/algorithms and the campaign, on click of a submit button, the re-training must happen and the model-scoreboard as well as the campaign lead targets must be displayed in separate tables/sections below the form.
 Please confirm if this is possible
+
+ToDo09Jul26:
+Ok, can we have a new tab for "Available Models" where we can have 6 models for now & we can increase them later..
+We can have a dropdown with available models like - Credit Card Propensity Model, Mutual Fund Propensity Model, Loans Propensity Model, Card Payment Defaulter Model, Investment Aggressiveness Model, Next Best Action Model (Recommendation System).
+And, we can have another Dropdown to select the available algorithms..
+And, a submit button would train the selected algorithm and show results..
+Please correct me if I'm going in the wrong direction & Provide your suggestions (in building a feature for Models)
+

@@ -134,6 +134,7 @@ export default function App() {
   const [studioScoreboard, setStudioScoreboard] = useState<any[]>([]);
   const [studioLeads, setStudioLeads] = useState<any[][]>([]);
   const [studioColumns, setStudioColumns] = useState<string[]>([]);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [driftStats, setDriftStats] = useState<{
     simulation_history: SimulationHistory[];
     distribution_chart: DistributionChartItem[];
@@ -451,7 +452,7 @@ export default function App() {
     let filtered = semanticMetadata;
     if (schemaSearchQuery.trim() !== '') {
       const q = schemaSearchQuery.toLowerCase();
-      filtered = semanticMetadata.filter(col => 
+      filtered = semanticMetadata.filter(col =>
         (col.table || '').toLowerCase().includes(q) ||
         (col.column || '').toLowerCase().includes(q) ||
         (col.type || '').toLowerCase().includes(q) ||
@@ -645,10 +646,10 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => setActiveTab('studio')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-colors ${activeTab === 'studio' ? 'bg-axis-burgundy text-white' : 'hover:bg-gray-800/40 text-gray-400 hover:text-white'}`}
+            onClick={() => setActiveTab('available_models')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-colors ${activeTab === 'available_models' ? 'bg-axis-burgundy text-white' : 'hover:bg-gray-800/40 text-gray-400 hover:text-white'}`}
           >
-            <Cpu size={18} /> ML Studio
+            <Cpu size={18} /> Available Models
           </button>
 
           {/* Simulation Controller Panel */}
@@ -1466,30 +1467,41 @@ export default function App() {
             </div>
           )}
 
-          {/* Tab 7: ML Studio */}
-          {activeTab === 'studio' && (
+          {/* Tab 7: Available Models */}
+          {activeTab === 'available_models' && (
             <div className={`p-6 rounded-2xl border ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'} space-y-6`}>
               <div>
-                <h2 className="text-xl font-bold tracking-tight">On-Demand ML Retraining Studio</h2>
-                <p className="text-xs text-gray-500 font-medium">Choose target campaign and algorithm models to run an instant model re-training pipeline.</p>
+                <h2 className="text-xl font-bold tracking-tight">Available Models & Interactive Training</h2>
+                <p className="text-xs text-gray-500 font-medium">Configure target business models and model architectures to trigger an on-demand ML training pipeline.</p>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Form Cockpit */}
                 <div className={`p-5 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} space-y-5 h-fit`}>
-                  <h3 className="font-bold text-sm tracking-wide uppercase text-gray-400">Retraining Inputs</h3>
-                  
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-bold text-sm tracking-wide uppercase text-gray-400">Model Selector</h3>
+                    <button
+                      onClick={() => setShowDetailsModal(true)}
+                      className="text-xs font-bold text-axis-burgundy dark:text-red-400 hover:underline cursor-pointer"
+                    >
+                      Details & Mapping
+                    </button>
+                  </div>
+
                   {/* Campaign Select */}
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-gray-405">Target Campaign</label>
+                    <label className="text-xs font-semibold text-gray-405">Target ML Model</label>
                     <select
                       value={studioCampaign}
                       onChange={(e) => setStudioCampaign(e.target.value)}
                       className={`w-full px-3 py-2 rounded-lg border text-xs focus:outline-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-gray-100' : 'bg-white border-gray-300 text-gray-900'}`}
                     >
-                      <option value="credit_card">Credit Cards (CC Cross-Sell)</option>
-                      <option value="mutual_funds">Mutual Funds (Investments)</option>
-                      <option value="loans">Retail Loans (Credit Demand)</option>
+                      <option value="credit_card">Credit Card Propensity Model</option>
+                      <option value="mutual_funds">Mutual Fund Propensity Model</option>
+                      <option value="loans">Loans Propensity Model</option>
+                      <option value="defaulter">Card Payment Defaulter Model</option>
+                      <option value="investment_aggressiveness">Investment Aggressiveness Model</option>
+                      <option value="next_best_action">Next Best Action Model (Recommendation System)</option>
                     </select>
                   </div>
 
@@ -1602,11 +1614,35 @@ export default function App() {
                             </tr>
                           ) : (
                             studioLeads.map((row, index) => (
-                              <tr key={index} className={`hover:bg-gray-800/10 dark:hover:bg-gray-900/40`}>
-                                <td className="p-3 font-mono font-bold text-axis-burgundy dark:text-red-400">{row[0]}</td>
-                                <td className="p-3 font-medium">₹{row[1].toLocaleString()}</td>
-                                <td className="p-3 font-medium">{row[2]}</td>
-                                <td className="p-3 font-bold text-green-500">{(row[3] * 100).toFixed(2)}%</td>
+                              <tr key={index} className={`hover:bg-gray-800/10 dark:hover:bg-gray-900/40 text-gray-305`}>
+                                {row.map((cell, cellIndex) => {
+                                  let displayVal = cell === null ? "N/A" : String(cell);
+                                  const isLast = cellIndex === row.length - 1;
+                                  const isPercentage = cellIndex === 3 || (row.length === 8 && (cellIndex === 4 || cellIndex === 5 || cellIndex === 6));
+
+                                  if (typeof cell === 'number') {
+                                    if (cellIndex === 1) {
+                                      displayVal = `₹${cell.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+                                    } else if (isPercentage) {
+                                      displayVal = `${(cell * 100).toFixed(2)}%`;
+                                    }
+                                  }
+                                  return (
+                                    <td key={cellIndex} className="p-3 font-medium">
+                                      {cellIndex === 0 ? (
+                                        <span className="font-mono text-axis-burgundy dark:text-red-400 font-bold">{displayVal}</span>
+                                      ) : isPercentage ? (
+                                        <span className="text-green-500 font-bold">{displayVal}</span>
+                                      ) : isLast && row.length === 8 ? (
+                                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-axis-burgundy/10 dark:bg-red-950/40 text-axis-burgundy dark:text-red-300 border border-red-900/20">
+                                          {displayVal}
+                                        </span>
+                                      ) : (
+                                        displayVal
+                                      )}
+                                    </td>
+                                  );
+                                })}
                               </tr>
                             ))
                           )}
@@ -1626,13 +1662,84 @@ export default function App() {
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gray-950/80 backdrop-blur-sm">
           <div className="relative w-16 h-16 flex items-center justify-center">
             <div className="absolute inset-0 rounded-full border-4 border-axis-burgundy border-t-transparent animate-spin"></div>
-            <div className="w-10 h-10 rounded-full bg-axis-burgundy flex items-center justify-center text-white font-bold text-lg">
+            {/* {<div className="w-10 h-10 rounded-full bg-axis-burgundy flex items-center justify-center text-white font-bold text-lg">
               A
-            </div>
+            </div>} */}
           </div>
           <p className="mt-4 text-xs font-semibold tracking-wider text-red-200 uppercase animate-pulse">
-            Querying Neon Postgres Database...
+            Loading...{/* {Querying Neon Postgres Database...} */}
           </p>
+        </div>
+      )}
+
+      {/* Model Mapping Specifications Modal */}
+      {showDetailsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/85 backdrop-blur-sm p-4">
+          <div className={`relative max-w-4xl w-full rounded-2xl border p-6 shadow-2xl overflow-y-auto max-h-[90vh] ${isDarkMode ? 'bg-gray-900 border-gray-800 text-white' : 'bg-white border-gray-200 text-gray-900'}`}>
+            <div className="flex items-center justify-between border-b pb-3 mb-4 border-gray-705">
+              <div>
+                <h3 className="text-base font-bold">Model Mapping Specifications</h3>
+                <p className="text-xs text-gray-400">Detailed overview of target formulations and datasets for the 6 available ML models.</p>
+              </div>
+              <button
+                onClick={() => setShowDetailsModal(false)}
+                className="text-gray-400 hover:text-white font-bold text-xs bg-gray-800 hover:bg-gray-750 px-3 py-1.5 rounded-lg transition-all cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className={`border-b ${isDarkMode ? 'bg-gray-950 border-gray-850 text-gray-405' : 'bg-gray-50 border-gray-200 text-gray-500'}`}>
+                    <th className="p-3 font-semibold uppercase tracking-wider">Model Name</th>
+                    <th className="p-3 font-semibold uppercase tracking-wider">Business Goal</th>
+                    <th className="p-3 font-semibold uppercase tracking-wider">Target Label (Y)</th>
+                    <th className="p-3 font-semibold uppercase tracking-wider">Source Table & Key Features</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800/50">
+                  <tr className="hover:bg-gray-850/20">
+                    <td className="p-3 font-bold text-axis-burgundy dark:text-red-400">Credit Card Propensity</td>
+                    <td className="p-3 font-medium">Predict likely credit card conversion.</td>
+                    <td className="p-3 font-mono text-gray-400">is_conversion_successful == 1</td>
+                    <td className="p-3 text-gray-400 font-medium">demographics, credit_card_history (annual_income, credit_score, monthly_spend, utilization)</td>
+                  </tr>
+                  <tr className="hover:bg-gray-850/20">
+                    <td className="p-3 font-bold text-axis-burgundy dark:text-red-400">Mutual Fund Propensity</td>
+                    <td className="p-3 font-medium">Predict likely mutual fund sign-ups.</td>
+                    <td className="p-3 font-mono text-gray-400">monthly_sip_amount &gt; 0</td>
+                    <td className="p-3 text-gray-400 font-medium">investment_profiles (fixed_deposit_balance, age, equity_portfolio_value)</td>
+                  </tr>
+                  <tr className="hover:bg-gray-850/20">
+                    <td className="p-3 font-bold text-axis-burgundy dark:text-red-400">Loans Propensity</td>
+                    <td className="p-3 font-medium">Predict likely loan application sign-ups.</td>
+                    <td className="p-3 font-mono text-gray-400">active_loans_count &gt; 0</td>
+                    <td className="p-3 text-gray-400 font-medium">loan_details (credit_score, total_outstanding_loan, monthly_loan_emi)</td>
+                  </tr>
+                  <tr className="hover:bg-gray-850/20">
+                    <td className="p-3 font-bold text-axis-burgundy dark:text-red-400">Card Payment Defaulter</td>
+                    <td className="p-3 font-medium">Identify customers likely to miss payments.</td>
+                    <td className="p-3 font-mono text-gray-400">late_payment_flag == True</td>
+                    <td className="p-3 text-gray-400 font-medium">credit_card_history (payment_delay_days, rewards_points_balance)</td>
+                  </tr>
+                  <tr className="hover:bg-gray-850/20">
+                    <td className="p-3 font-bold text-axis-burgundy dark:text-red-400">Investment Aggressiveness</td>
+                    <td className="p-3 font-medium">Predict if customer has aggressive risk appetite.</td>
+                    <td className="p-3 font-mono text-gray-400">risk_profile == 'Aggressive'</td>
+                    <td className="p-3 text-gray-400 font-medium">investment_profiles (equity_portfolio_value, risk_profile)</td>
+                  </tr>
+                  <tr className="hover:bg-gray-850/20">
+                    <td className="p-3 font-bold text-axis-burgundy dark:text-red-400">Next Best Action</td>
+                    <td className="p-3 font-medium">Recommend product with highest conversion score.</td>
+                    <td className="p-3 font-mono text-gray-400">is_conversion_successful == 1</td>
+                    <td className="p-3 text-gray-400 font-medium">Ensembles credit card, mutual fund, and loans scores.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 

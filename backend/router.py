@@ -23,9 +23,9 @@ def load_training_data() -> pd.DataFrame:
         query = """
             SELECT 
                 d.customer_id, d.age, d.annual_income, d.credit_score, d.gender,
-                c.credit_limit, c.monthly_spend, c.average_utilization, c.payment_delay_days,
+                c.credit_limit, c.monthly_spend, c.average_utilization, c.payment_delay_days, c.late_payment_flag,
                 l.active_loans_count, l.total_outstanding_loan, l.average_interest_rate, l.monthly_loan_emi,
-                i.mutual_fund_holdings, i.equity_portfolio_value, i.fixed_deposit_balance, i.monthly_sip_amount,
+                i.mutual_fund_holdings, i.equity_portfolio_value, i.fixed_deposit_balance, i.monthly_sip_amount, i.risk_profile,
                 p.is_conversion_successful
             FROM demographics d
             LEFT JOIN credit_card_history c ON d.customer_id = c.customer_id
@@ -33,7 +33,12 @@ def load_training_data() -> pd.DataFrame:
             LEFT JOIN investment_profiles i ON d.customer_id = i.customer_id
             LEFT JOIN predictions p ON d.customer_id = p.customer_id
         """
-        df = pd.read_sql(query, conn)
+        with conn.cursor() as cur:
+            cur.execute(query)
+            rows = cur.fetchall()
+            colnames = [desc[0] for desc in cur.description]
+            df = pd.DataFrame(rows, columns=colnames)
+            
         # Convert numeric features from decimal.Decimal to float
         for col in FEATURES:
             if col in df.columns:
@@ -154,14 +159,19 @@ def train_custom_models(campaign: str, algorithms: list):
         raise ValueError("Database is empty. Cannot train models.")
         
     # Dynamically define y targets based on campaign choice
-    if campaign == 'credit_card':
+    campaign_norm = campaign.lower()
+    if campaign_norm in ['credit_card', 'credit_card_propensity']:
         y = (df['is_conversion_successful'] == 1).astype(int)
-    elif campaign == 'mutual_funds':
-        # Synthesize target: customer has active SIP or mutual fund holdings
-        y = (df['monthly_sip_amount'] > 0).astype(int)
-    elif campaign == 'loans':
-        # Synthesize target: customer has active loans count > 0
-        y = (df['active_loans_count'] > 0).astype(int)
+    elif campaign_norm in ['mutual_funds', 'mutual_funds_propensity', 'mutual_fund_propensity_model', 'mutual_funds/investments']:
+        y = (df['monthly_sip_amount'].fillna(0) > 0).astype(int)
+    elif campaign_norm in ['loans', 'loans_propensity', 'loans_propensity_model']:
+        y = (df['active_loans_count'].fillna(0) > 0).astype(int)
+    elif campaign_norm in ['defaulter', 'card_defaulter', 'card_payment_defaulter', 'card_payment_defaulter_model']:
+        y = (df['late_payment_flag'].fillna(False) == True).astype(int)
+    elif campaign_norm in ['investment_aggressiveness', 'investment_aggressiveness_model']:
+        y = (df['risk_profile'].fillna('').str.lower() == 'aggressive').astype(int)
+    elif campaign_norm in ['next_best_action', 'next_best_action_model']:
+        y = (df['is_conversion_successful'].fillna(-1) == 1).astype(int)
     else:
         raise ValueError(f"Invalid campaign choice: {campaign}")
         
@@ -230,7 +240,20 @@ def train_custom_models(campaign: str, algorithms: list):
             
     # Score targets using the best-performing retrained model
     top_leads_rows = []
-    leads_columns = ["Customer ID", "Annual Income", "Credit Score", "Propensity Score"]
+    
+    score_col_name = "Propensity Score"
+    is_nba = False
+    if campaign_norm in ['defaulter', 'card_defulter', 'card_payment_defaulter', 'card_payment_defaulter_model']:
+        score_col_name = "Defaulter Prob"
+    elif campaign_norm in ['investment_aggressiveness', 'investment_aggressiveness_model']:
+        score_col_name = "Aggressiveness Prob"
+    elif campaign_norm in ['next_best_action', 'next_best_action_model']:
+        score_col_name = "Recommendation Score"
+        is_nba = True
+        
+    leads_columns = ["Customer ID", "Annual Income", "Credit Score", score_col_name]
+    if is_nba:
+        leads_columns.extend(["CC Affinity", "MF Affinity", "Loan Affinity", "Recommended Product"])
     
     if best_model_id and best_model_id in trained_models:
         best_model = trained_models[best_model_id]
@@ -241,11 +264,46 @@ def train_custom_models(campaign: str, algorithms: list):
         sorted_df = df.sort_values(by='temp_propensity', ascending=False).head(100)
         
         for _, row in sorted_df.iterrows():
-            top_leads_rows.append([
+            row_data = [
                 row['customer_id'],
                 float(row['annual_income']),
                 int(row['credit_score']),
                 round(float(row['temp_propensity']), 4)
-            ])
+            ]
+            if is_nba:
+                annual_inc = float(row.get('annual_income', 0.0) or 1.0)
+                if annual_inc <= 0.0:
+                    annual_inc = 1.0
+                    
+                # Credit Card affinity: ratio of annualized spend to income
+                card_util = float(row.get('average_utilization', 0.0) or 0.0)
+                card_spend_annual = float(row.get('monthly_spend', 0.0) or 0.0) * 12.0
+                card_score = (card_spend_annual / annual_inc) * (1.0 - card_util)
+                
+                # Mutual Fund affinity: ratio of idle fixed deposits to income
+                fd_bal = float(row.get('fixed_deposit_balance', 0.0) or 0.0)
+                inv_score = fd_bal / annual_inc
+                
+                # Loan affinity: credit score ratio scaled down by existing loan load and scaled by 0.3
+                c_score = float(row.get('credit_score', 0.0) or 300.0)
+                loans_cnt = float(row.get('active_loans_count', 0) or 0)
+                loan_score = ((c_score / 850.0) / (loans_cnt + 1.0)) * 0.3
+                
+                scores = {
+                    "Credit Cards": card_score,
+                    "Mutual Funds": inv_score,
+                    "Retail Loans": loan_score
+                }
+                rec_product = max(scores, key=scores.get)
+                
+                # Append individual scores
+                row_data.extend([
+                    round(float(card_score), 4),
+                    round(float(inv_score), 4),
+                    round(float(loan_score), 4),
+                    rec_product
+                ])
+                
+            top_leads_rows.append(row_data)
             
     return retrained_scoreboard, top_leads_rows, leads_columns
