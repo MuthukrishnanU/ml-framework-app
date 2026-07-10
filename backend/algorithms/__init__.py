@@ -15,8 +15,8 @@ ALL_ALGORITHMS = {
     "Neural Network": NeuralNetworkWrapper
 }
 
-def create_model_wrapper(algorithm_type: str, model_id: str) -> UnifiedModelWrapper:
+def create_model_wrapper(algorithm_type: str, model_id: str, features: list = None) -> UnifiedModelWrapper:
     """Helper factory function to dynamically initialize wrappers."""
     if algorithm_type not in ALL_ALGORITHMS:
         raise ValueError(f"Unknown algorithm type: {algorithm_type}")
-    return ALL_ALGORITHMS[algorithm_type](model_id)
+    return ALL_ALGORITHMS[algorithm_type](model_id, features=features)

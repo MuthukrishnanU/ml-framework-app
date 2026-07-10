@@ -14,18 +14,18 @@ FEATURES = [
 class LinearRegressionWrapper(UnifiedModelWrapper):
     """Wrapper for Linear Regression classification."""
     
-    def __init__(self, model_id: str):
-        super().__init__(model_id, "Linear Regression")
+    def __init__(self, model_id: str, features: list = None):
+        super().__init__(model_id, "Linear Regression", features=features or FEATURES)
         self.model = LinearRegression()
         
     def train(self, df: pd.DataFrame, target_col: str):
-        X = df[FEATURES].fillna(0).to_numpy()
+        X = df[self.features].fillna(0).to_numpy()
         y = df[target_col].to_numpy()
         self.model.fit(X, y)
         self.is_trained = True
         
     def predict(self, df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-        X = df[FEATURES].fillna(0).to_numpy()
+        X = df[self.features].fillna(0).to_numpy()
         probs = self.model.predict(X)
         probs = np.clip(probs, 0.0, 1.0)
         labels = (probs >= 0.55).astype(int)
@@ -33,7 +33,7 @@ class LinearRegressionWrapper(UnifiedModelWrapper):
         
     def explain(self, df: pd.DataFrame) -> np.ndarray:
         # Approximate explanations using model coefficients
-        X = df[FEATURES].fillna(0).to_numpy()
+        X = df[self.features].fillna(0).to_numpy()
         coefs = self.model.coef_
         # element-wise multiplication represents the feature impact
         impact = X * coefs

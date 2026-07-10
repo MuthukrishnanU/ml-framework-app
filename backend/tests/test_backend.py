@@ -98,3 +98,21 @@ def test_api_models_list():
         assert "baselines" in model
         assert "live_metrics" in model
         assert "roc_auc_rank" in model
+
+
+def test_custom_features_pipeline():
+    """Verifies that we can train a model wrapper with a custom subset of features."""
+    custom_features = ["age", "annual_income", "credit_score"]
+    np.random.seed(42)
+    X_raw = np.random.uniform(0.0, 1.0, size=(100, 3))
+    y_raw = np.random.choice([0, 1], size=100)
+    df = pd.DataFrame(X_raw, columns=custom_features)
+    df["target"] = y_raw
+    
+    wrapper = create_model_wrapper("XGBoost", "test_custom_xgb", features=custom_features)
+    wrapper.train(df, "target")
+    assert wrapper.is_trained
+    assert wrapper.features == custom_features
+    
+    probs, labels = wrapper.predict(df)
+    assert len(probs) == 100

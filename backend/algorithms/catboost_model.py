@@ -14,13 +14,13 @@ FEATURES = [
 class CatBoostWrapper(UnifiedModelWrapper):
     """Wrapper for CatBoost classification."""
     
-    def __init__(self, model_id: str):
-        super().__init__(model_id, "CatBoost")
+    def __init__(self, model_id: str, features: list = None):
+        super().__init__(model_id, "CatBoost", features=features or FEATURES)
         # Initialize in quiet mode to avoid verbose logs during training
         self.model = CatBoostClassifier(iterations=100, random_seed=42, depth=6, verbose=0)
         
     def train(self, df: pd.DataFrame, target_col: str):
-        X = df[FEATURES].fillna(0).to_numpy()
+        X = df[self.features].fillna(0).to_numpy()
         y = df[target_col].to_numpy()
         
         if len(np.unique(y)) < 2:
@@ -31,13 +31,13 @@ class CatBoostWrapper(UnifiedModelWrapper):
         self.is_trained = True
         
     def predict(self, df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-        X = df[FEATURES].fillna(0).to_numpy()
+        X = df[self.features].fillna(0).to_numpy()
         probs = self.model.predict_proba(X)[:, 1]
         labels = (probs >= 0.55).astype(int)
         return probs, labels
         
     def explain(self, df: pd.DataFrame) -> np.ndarray:
-        X = df[FEATURES].fillna(0).to_numpy()
+        X = df[self.features].fillna(0).to_numpy()
         importances = self.model.get_feature_importance()
         # Normalize importances so they sum to 1.0 (get_feature_importance sum up to 100)
         importances = np.array(importances) / 100.0

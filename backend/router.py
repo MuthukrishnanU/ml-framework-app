@@ -307,3 +307,287 @@ def train_custom_models(campaign: str, algorithms: list):
             top_leads_rows.append(row_data)
             
     return retrained_scoreboard, top_leads_rows, leads_columns
+
+
+def query_base_cohort_df(filters: dict) -> pd.DataFrame:
+    """Queries Neon PostgreSQL to compile base customer segment matching demographic filters."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        
+        where_clauses = []
+        params = []
+        
+        if "age_min" in filters and filters["age_min"] is not None:
+            where_clauses.append("d.age >= %s")
+            params.append(int(filters["age_min"]))
+        if "age_max" in filters and filters["age_max"] is not None:
+            where_clauses.append("d.age <= %s")
+            params.append(int(filters["age_max"]))
+        if "income_min" in filters and filters["income_min"] is not None:
+            where_clauses.append("d.annual_income >= %s")
+            params.append(float(filters["income_min"]))
+        if "credit_score_min" in filters and filters["credit_score_min"] is not None:
+            where_clauses.append("d.credit_score >= %s")
+            params.append(int(filters["credit_score_min"]))
+        if "gender" in filters and filters["gender"] not in ["All", None]:
+            where_clauses.append("d.gender = %s")
+            params.append(filters["gender"])
+            
+        where_str = ""
+        if where_clauses:
+            where_str = "WHERE " + " AND ".join(where_clauses)
+            
+        query = f"""
+            SELECT 
+                d.customer_id, d.age, d.annual_income, d.credit_score, d.gender,
+                c.credit_limit, c.monthly_spend, c.average_utilization, c.payment_delay_days, c.late_payment_flag,
+                l.active_loans_count, l.total_outstanding_loan, l.average_interest_rate, l.monthly_loan_emi,
+                i.mutual_fund_holdings, i.equity_portfolio_value, i.fixed_deposit_balance, i.monthly_sip_amount, i.risk_profile,
+                p.is_conversion_successful
+            FROM demographics d
+            LEFT JOIN credit_card_history c ON d.customer_id = c.customer_id
+            LEFT JOIN loan_details l ON d.customer_id = l.customer_id
+            LEFT JOIN investment_profiles i ON d.customer_id = i.customer_id
+            LEFT JOIN predictions p ON d.customer_id = p.customer_id
+            {where_str}
+        """
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            colnames = [desc[0] for desc in cur.description]
+            df = pd.DataFrame(rows, columns=colnames)
+            
+        numeric_cols = [
+            "age", "annual_income", "credit_score", "credit_limit", "monthly_spend",
+            "average_utilization", "payment_delay_days", "active_loans_count",
+            "total_outstanding_loan", "average_interest_rate", "monthly_loan_emi",
+            "mutual_fund_holdings", "equity_portfolio_value", "fixed_deposit_balance",
+            "monthly_sip_amount"
+        ]
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        return df
+    except Exception as e:
+        print(f"Error loading base cohort data: {e}")
+        return pd.DataFrame()
+    finally:
+        if conn:
+            release_db_connection(conn)
+
+
+def calculate_correlation_matrix(df: pd.DataFrame, columns: list) -> dict:
+    """Calculates Pearson correlation coefficients for numeric columns."""
+    if df.empty or not columns:
+        return {"columns": [], "matrix": []}
+    
+    # Filter to only numeric columns existing in the dataframe
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    valid_cols = [col for col in columns if col in df.columns and col in numeric_cols]
+    
+    if not valid_cols:
+        return {"columns": [], "matrix": []}
+    
+    try:
+        corr_df = df[valid_cols].corr().fillna(0.0)
+        return {
+            "columns": valid_cols,
+            "matrix": corr_df.values.tolist()
+        }
+    except Exception as e:
+        print(f"Error calculating correlation matrix: {e}")
+        return {"columns": [], "matrix": []}
+
+
+def train_stepper_pipeline(
+    campaign: str,
+    algorithms: list,
+    base_filters: dict,
+    selected_features: list,
+    imputations: dict,
+    hyperparameters: dict,
+    split_ratio: float
+):
+    """Orchestrates custom model training with cohort filtering, feature selection, imputations, and hyperparameter tuning."""
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import roc_curve, precision_recall_curve
+    import time
+    
+    # 1. Base Pull Cohort
+    df = query_base_cohort_df(base_filters)
+    if df.empty:
+        raise ValueError("Selected cohort returned zero customer records.")
+        
+    # 2. Map target y variable based on campaign
+    campaign_norm = campaign.lower()
+    if campaign_norm in ['credit_card', 'credit_card_propensity']:
+        y = (df['is_conversion_successful'] == 1).astype(int)
+    elif campaign_norm in ['mutual_funds', 'mutual_funds_propensity', 'mutual_fund_propensity_model', 'mutual_funds/investments']:
+        y = (df['monthly_sip_amount'].fillna(0) > 0).astype(int)
+    elif campaign_norm in ['loans', 'loans_propensity', 'loans_propensity_model']:
+        y = (df['active_loans_count'].fillna(0) > 0).astype(int)
+    elif campaign_norm in ['defaulter', 'card_defaulter', 'card_payment_defaulter', 'card_payment_defaulter_model']:
+        y = (df['late_payment_flag'].fillna(False) == True).astype(int)
+    elif campaign_norm in ['investment_aggressiveness', 'investment_aggressiveness_model']:
+        y = (df['risk_profile'].fillna('').str.lower() == 'aggressive').astype(int)
+    elif campaign_norm in ['next_best_action', 'next_best_action_model']:
+        y = (df['is_conversion_successful'].fillna(-1) == 1).astype(int)
+    else:
+        raise ValueError(f"Invalid campaign: {campaign}")
+        
+    df['temp_target'] = y
+    
+    # 3. Apply Imputations and Drop Selected Features
+    final_features = []
+    for col in selected_features:
+        strategy = imputations.get(col, "zero")
+        if strategy == "drop":
+            continue
+        final_features.append(col)
+        
+        if col in df.columns:
+            if strategy == "mean":
+                val = df[col].mean()
+                df[col] = df[col].fillna(val if pd.notnull(val) else 0.0)
+            elif strategy == "median":
+                val = df[col].median()
+                df[col] = df[col].fillna(val if pd.notnull(val) else 0.0)
+            elif strategy == "zero":
+                df[col] = df[col].fillna(0.0)
+            else:
+                df[col] = df[col].fillna(0.0)
+                
+    if not final_features:
+        raise ValueError("At least one feature must be selected after imputation drops.")
+        
+    # 4. Train-Test Split
+    if len(df) < 10:
+        raise ValueError(f"Cohort size is too small ({len(df)} records) to split and train models.")
+        
+    train_df, test_df = train_test_split(df, train_size=split_ratio, random_state=42)
+    
+    # Mapping keys to backend model constructors
+    model_mapping = {
+        "linear_regression": ("Linear Regression", "lin_reg_pipeline"),
+        "logistic_regression": ("Logistic Regression", "log_reg_pipeline"),
+        "xgboost": ("XGBoost", "xgb_pipeline"),
+        "catboost": ("CatBoost", "cat_pipeline"),
+        "random_forest": ("Random Forest", "rf_pipeline"),
+        "pytorch_mlp": ("Neural Network", "mlp_pipeline")
+    }
+    
+    scoreboard = []
+    validation_curves = {}
+    
+    for alg in algorithms:
+        if alg not in model_mapping:
+            continue
+        algo_name, model_id = model_mapping[alg]
+        
+        start_time = time.time()
+        try:
+            # Instantiate model wrapper with custom features subset
+            model_instance = create_model_wrapper(algo_name, model_id, features=final_features)
+            
+            # Apply hyperparameters securely using set_params standard
+            alg_params = hyperparameters.get(alg, {})
+            if hasattr(model_instance, "model"):
+                target_estimator = model_instance.model
+                # Handle pipeline nested estimator named step
+                if algo_name == "Logistic Regression" and hasattr(model_instance.model, "named_steps"):
+                    target_estimator = model_instance.model.named_steps["logisticregression"]
+                
+                # Filter and cast parameter types safely
+                valid_params = {}
+                model_params = target_estimator.get_params()
+                for k, v in alg_params.items():
+                    if k in model_params:
+                        if k in ["max_depth", "n_estimators", "max_iter", "depth", "iterations"]:
+                            valid_params[k] = int(v)
+                        elif k in ["learning_rate", "learning_rate_init", "alpha", "C"]:
+                            valid_params[k] = float(v)
+                        else:
+                            valid_params[k] = v
+                if valid_params:
+                    target_estimator.set_params(**valid_params)
+            
+            # Train model wrapper
+            model_instance.train(train_df, "temp_target")
+            latency = (time.time() - start_time) * 1000.0
+            
+            # Evaluate using base validation wrapper methods
+            metrics = model_instance.evaluate(test_df, "temp_target")
+            auc = metrics.get("roc_auc", 0.5)
+            
+            probs, labels = model_instance.predict(test_df)
+            fair_ratio = model_instance.check_fairness(test_df, labels)
+            
+            scoreboard.append({
+                "model_id": model_id,
+                "algorithm_type": algo_name,
+                "version": "v2.0-studio",
+                "status": "Ready",
+                "auc": round(float(auc), 4),
+                "fairness_adverse_impact_ratio": round(float(fair_ratio), 4),
+                "latency_ms": round(float(latency), 2)
+            })
+            
+            # Calculate validation curves
+            y_test = test_df["temp_target"].to_numpy()
+            
+            # ROC Curve calculations
+            fpr_arr, tpr_arr, _ = roc_curve(y_test, probs)
+            indices = np.linspace(0, len(fpr_arr) - 1, 15, dtype=int)
+            roc_points = [{"fpr": round(float(fpr_arr[i]), 4), "tpr": round(float(tpr_arr[i]), 4)} for i in indices]
+            
+            # Precision-Recall Curve calculations
+            prec_arr, rec_arr, _ = precision_recall_curve(y_test, probs)
+            indices = np.linspace(0, len(prec_arr) - 1, 15, dtype=int)
+            pr_points = [{"recall": round(float(rec_arr[i]), 4), "precision": round(float(prec_arr[i]), 4)} for i in indices]
+            
+            # Risk Sloping calculations
+            bins = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+            bin_labels = ["0-20%", "20-40%", "40-60%", "60-80%", "80-100%"]
+            risk_points = []
+            
+            for b_idx in range(len(bins)-1):
+                b_min, b_max = bins[b_idx], bins[b_idx+1]
+                in_bin = (probs >= b_min) & (probs <= b_max)
+                bin_count = int(np.sum(in_bin))
+                if bin_count > 0:
+                    conversions = int(np.sum(y_test[in_bin] == 1))
+                    actual_rate = round(conversions / bin_count, 4)
+                    predicted_rate = round(float(np.mean(probs[in_bin])), 4)
+                else:
+                    actual_rate = 0.0
+                    predicted_rate = round((b_min + b_max) / 2.0, 4)
+                    
+                risk_points.append({
+                    "bin": bin_labels[b_idx],
+                    "predicted_rate": predicted_rate,
+                    "actual_rate": actual_rate,
+                    "count": bin_count
+                })
+                
+            validation_curves[model_id] = {
+                "roc_curve": roc_points,
+                "pr_curve": pr_points,
+                "risk_sloping": risk_points,
+                "gini": round(float(2.0 * auc - 1.0), 4),
+                "ks": metrics.get("ks_statistic", 0.0)
+            }
+            
+        except Exception as e:
+            print(f"Stepper pipeline failed to train {algo_name}: {e}")
+            scoreboard.append({
+                "model_id": model_id,
+                "algorithm_type": algo_name,
+                "version": "v2.0-studio",
+                "status": f"Failed: {str(e)}",
+                "auc": 0.5,
+                "fairness_adverse_impact_ratio": 1.0,
+                "latency_ms": 0.0
+            })
+            
+    return scoreboard, validation_curves

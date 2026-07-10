@@ -16,8 +16,8 @@ FEATURES = [
 class LogisticRegressionWrapper(UnifiedModelWrapper):
     """Wrapper for Logistic Regression classification using feature scaling."""
     
-    def __init__(self, model_id: str):
-        super().__init__(model_id, "Logistic Regression")
+    def __init__(self, model_id: str, features: list = None):
+        super().__init__(model_id, "Logistic Regression", features=features or FEATURES)
         # Use pipeline to scale inputs before model fitting
         self.model = make_pipeline(
             StandardScaler(),
@@ -25,7 +25,7 @@ class LogisticRegressionWrapper(UnifiedModelWrapper):
         )
         
     def train(self, df: pd.DataFrame, target_col: str):
-        X = df[FEATURES].fillna(0).to_numpy()
+        X = df[self.features].fillna(0).to_numpy()
         y = df[target_col].to_numpy()
         
         if len(np.unique(y)) < 2:
@@ -36,13 +36,13 @@ class LogisticRegressionWrapper(UnifiedModelWrapper):
         self.is_trained = True
         
     def predict(self, df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-        X = df[FEATURES].fillna(0).to_numpy()
+        X = df[self.features].fillna(0).to_numpy()
         probs = self.model.predict_proba(X)[:, 1]
         labels = (probs >= 0.55).astype(int)
         return probs, labels
         
     def explain(self, df: pd.DataFrame) -> np.ndarray:
-        X = df[FEATURES].fillna(0).to_numpy()
+        X = df[self.features].fillna(0).to_numpy()
         # Retrieve the coefficients from the logisticregression step in the pipeline
         coefs = self.model.named_steps["logisticregression"].coef_[0]
         impact = X * coefs

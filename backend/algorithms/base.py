@@ -7,10 +7,11 @@ from scipy.stats import ks_2samp
 class UnifiedModelWrapper(abc.ABC):
     """Abstract base class defining the standard interface for all 6 candidate algorithms."""
     
-    def __init__(self, model_id: str, algorithm_type: str):
+    def __init__(self, model_id: str, algorithm_type: str, features: list = None):
         self.model_id = model_id
         self.algorithm_type = algorithm_type
         self.is_trained = False
+        self.features = features
         
     @abc.abstractmethod
     def train(self, df: pd.DataFrame, target_col: str):

@@ -14,12 +14,12 @@ FEATURES = [
 class XGBoostWrapper(UnifiedModelWrapper):
     """Wrapper for XGBoost classification."""
     
-    def __init__(self, model_id: str):
-        super().__init__(model_id, "XGBoost")
+    def __init__(self, model_id: str, features: list = None):
+        super().__init__(model_id, "XGBoost", features=features or FEATURES)
         self.model = XGBClassifier(n_estimators=100, random_state=42, max_depth=5, eval_metric="logloss")
         
     def train(self, df: pd.DataFrame, target_col: str):
-        X = df[FEATURES].fillna(0).to_numpy()
+        X = df[self.features].fillna(0).to_numpy()
         y = df[target_col].to_numpy()
         
         if len(np.unique(y)) < 2:
@@ -30,13 +30,13 @@ class XGBoostWrapper(UnifiedModelWrapper):
         self.is_trained = True
         
     def predict(self, df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-        X = df[FEATURES].fillna(0).to_numpy()
+        X = df[self.features].fillna(0).to_numpy()
         probs = self.model.predict_proba(X)[:, 1]
         labels = (probs >= 0.55).astype(int)
         return probs, labels
         
     def explain(self, df: pd.DataFrame) -> np.ndarray:
-        X = df[FEATURES].fillna(0).to_numpy()
+        X = df[self.features].fillna(0).to_numpy()
         importances = self.model.feature_importances_
         impact = X * importances
         

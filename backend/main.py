@@ -915,6 +915,86 @@ def get_observability_logs(page: int = 1, page_size: int = 100, search: str = ""
             release_db_connection(conn)
 
 
+class BasePullRequest(BaseModel):
+    age_min: int = 18
+    age_max: int = 100
+    income_min: float = 0.0
+    credit_score_min: int = 300
+    gender: str = "All"
+
+class FeatureReductionRequest(BaseModel):
+    base_pull: BasePullRequest
+    selected_features: list[str]
+
+class TrainStepperRequest(BaseModel):
+    campaign: str
+    algorithms: list[str]
+    base_pull: BasePullRequest
+    selected_features: list[str]
+    imputations: dict[str, str]
+    hyperparameters: dict[str, dict[str, float]]
+    split_ratio: float = 0.8
+
+@app.post("/api/segmentation/base_pull_preview")
+def post_base_pull_preview(payload: BasePullRequest):
+    try:
+        from backend.router import query_base_cohort_df
+        df = query_base_cohort_df(payload.dict())
+        return {"count": len(df)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/ml/feature_reduction_preview")
+def post_feature_reduction_preview(payload: FeatureReductionRequest):
+    try:
+        from backend.router import query_base_cohort_df, calculate_correlation_matrix
+        df = query_base_cohort_df(payload.base_pull.dict())
+        
+        missing_stats = {}
+        for col in payload.selected_features:
+            if col in df.columns:
+                null_cnt = int(df[col].isnull().sum())
+                null_pct = round(null_cnt / max(1, len(df)), 4)
+                missing_stats[col] = {
+                    "null_count": null_cnt,
+                    "null_percentage": null_pct
+                }
+            else:
+                missing_stats[col] = {
+                    "null_count": 0,
+                    "null_percentage": 0.0
+                }
+                
+        corr_data = calculate_correlation_matrix(df, payload.selected_features)
+        
+        return {
+            "missing_stats": missing_stats,
+            "correlation_matrix": corr_data
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/ml/train_custom_stepper")
+def post_train_custom_stepper(payload: TrainStepperRequest):
+    try:
+        from backend.router import train_stepper_pipeline
+        scoreboard, validation_curves = train_stepper_pipeline(
+            campaign=payload.campaign,
+            algorithms=payload.algorithms,
+            base_filters=payload.base_pull.dict(),
+            selected_features=payload.selected_features,
+            imputations=payload.imputations,
+            hyperparameters=payload.hyperparameters,
+            split_ratio=payload.split_ratio
+        )
+        return {
+            "scoreboard": scoreboard,
+            "validation_curves": validation_curves
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Serve static frontend files if built (production mode)
 from fastapi.staticfiles import StaticFiles
 frontend_dist_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../frontend/dist"))

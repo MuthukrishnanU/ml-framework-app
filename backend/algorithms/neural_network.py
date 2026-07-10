@@ -14,12 +14,12 @@ FEATURES = [
 class NeuralNetworkWrapper(UnifiedModelWrapper):
     """Wrapper for Multi-Layer Perceptron Neural Network classification."""
     
-    def __init__(self, model_id: str):
-        super().__init__(model_id, "Neural Network")
+    def __init__(self, model_id: str, features: list = None):
+        super().__init__(model_id, "Neural Network", features=features or FEATURES)
         self.model = MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=500, random_state=42)
         
     def train(self, df: pd.DataFrame, target_col: str):
-        X = df[FEATURES].fillna(0).to_numpy()
+        X = df[self.features].fillna(0).to_numpy()
         y = df[target_col].to_numpy()
         
         if len(np.unique(y)) < 2:
@@ -30,14 +30,14 @@ class NeuralNetworkWrapper(UnifiedModelWrapper):
         self.is_trained = True
         
     def predict(self, df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-        X = df[FEATURES].fillna(0).to_numpy()
+        X = df[self.features].fillna(0).to_numpy()
         probs = self.model.predict_proba(X)[:, 1]
         labels = (probs >= 0.55).astype(int)
         return probs, labels
         
     def explain(self, df: pd.DataFrame) -> np.ndarray:
         # Approximate feature contribution for MLP by summing the absolute weights of the first layer
-        X = df[FEATURES].fillna(0).to_numpy()
+        X = df[self.features].fillna(0).to_numpy()
         
         # Mean weight magnitude per input feature from the first layer connections
         weights = np.mean(np.abs(self.model.coefs_[0]), axis=1)
