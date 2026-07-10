@@ -96,10 +96,9 @@ export default function DashboardLayout() {
                 key={item.path}
                 to={item.path}
                 className={({ isActive }) =>
-                  `w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-colors ${
-                    isActive
-                      ? 'bg-axis-burgundy text-white'
-                      : 'hover:bg-gray-850/40 text-gray-400 hover:text-white'
+                  `w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-colors ${isActive
+                    ? 'bg-axis-burgundy text-white'
+                    : `hover:bg-gray-850/40 ${isDarkMode ? 'text-gray-400 hover:text-white' : 'text-gray-400 hover:text-gray-600'}`
                   }`
                 }
               >

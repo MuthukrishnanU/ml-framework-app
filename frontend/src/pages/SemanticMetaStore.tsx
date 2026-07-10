@@ -69,7 +69,7 @@ export default function SemanticMetaStore() {
       <div className={`p-6 rounded-2xl border ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'} space-y-6`}>
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h2 className="text-xl font-bold tracking-tight text-axis-burgundy dark:text-red-200">Semantic Layer Meta Store</h2>
+            <h2 className={`text-xl font-bold tracking-tight ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'}`}>Semantic Layer Meta Store</h2>
             <p className="text-xs text-gray-500 font-medium">Inspect database schema definitions and sensitivity classifications.</p>
           </div>
           <div className="flex items-center gap-3">
@@ -144,7 +144,7 @@ export default function SemanticMetaStore() {
               ) : (
                 paginatedSchemaData.map((col, index) => (
                   <tr key={index} className={`hover:bg-gray-50 dark:hover:bg-gray-850/40 transition-colors ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                    <td className="p-4 font-bold text-white">{col.table}</td>
+                    <td className={`p-4 font-bold ${isDarkMode ? 'text-white' : 'text-gray-600'}`}>{col.table}</td>
                     <td className="p-4 font-mono text-red-400">{col.column}</td>
                     <td className="p-4 font-mono text-gray-400">{col.type}</td>
                     <td className="p-4 text-center">
@@ -152,7 +152,7 @@ export default function SemanticMetaStore() {
                     </td>
                     <td className="p-4 font-mono text-blue-400">{col.fk}</td>
                     <td className="p-4">
-                      <span className={`px-2 py-0.5 text-[10px] rounded font-semibold ${col.sens === 'Critical' ? 'bg-red-950 text-red-400 border border-red-900' : col.sens === 'High' ? 'bg-amber-950 text-amber-400 border border-amber-900' : 'bg-gray-800 text-gray-450'}`}>
+                      <span className={`px-2 py-0.5 text-[10px] rounded font-semibold ${col.sens === 'Critical' ? `bg-red-950 ${isDarkMode ? 'text-red-400' : 'text-red-600'} border border-red-900` : col.sens === 'High' ? `bg-amber-950 ${isDarkMode ? 'text-amber-400' : 'text-white'} border border-amber-900` : 'bg-gray-800 text-white'}`}>
                         {col.sens}
                       </span>
                     </td>

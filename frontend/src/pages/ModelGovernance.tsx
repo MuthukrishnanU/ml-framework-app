@@ -48,7 +48,7 @@ export default function ModelGovernance() {
     <div className="space-y-6">
       {/* Settings and Policy Switch panel */}
       <div className={`p-6 rounded-2xl border shadow-sm ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'}`}>
-        <h3 className="font-bold text-base text-axis-burgundy dark:text-red-200 mb-4">Failover Policy Settings</h3>
+        <h3 className={`font-bold text-base ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'} mb-4`}>Failover Policy Settings</h3>
 
         <div className="flex items-center gap-8 text-sm">
           <div>
@@ -135,7 +135,7 @@ export default function ModelGovernance() {
       {/* Governance Audit Log Trail */}
       <div className={`rounded-2xl border shadow-sm ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'}`}>
         <div className="px-6 py-4 border-b border-gray-800">
-          <h3 className="font-bold text-base text-axis-burgundy dark:text-red-200">Governance Audit Trail (Immutable)</h3>
+          <h3 className={`font-bold text-base ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'}`}>Governance Audit Trail (Immutable)</h3>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
@@ -159,8 +159,8 @@ export default function ModelGovernance() {
                 auditLog.map((log, index) => (
                   <tr key={index} className="hover:bg-gray-800/10 transition-colors">
                     <td className="p-4 text-gray-450 text-[10px]">{log.timestamp}</td>
-                    <td className="p-4 font-bold text-gray-300">{log.triggered_by}</td>
-                    <td className="p-4 text-white font-semibold">{log.action}</td>
+                    <td className={`p-4 font-bold ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{log.triggered_by}</td>
+                    <td className={`p-4 ${isDarkMode ? 'text-white' : 'text-gray-400'} font-semibold`}>{log.action}</td>
                     <td className="p-4 text-blue-400 truncate max-w-xs" title={log.evidence}>
                       {log.evidence}
                     </td>

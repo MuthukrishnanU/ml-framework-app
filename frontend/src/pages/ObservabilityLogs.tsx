@@ -122,8 +122,8 @@ export default function ObservabilityLogs() {
               observabilityLogs.map((log) => {
                 const isSuccess = log.status_code >= 200 && log.status_code < 300;
                 return (
-                  <tr key={log.log_id} className="hover:bg-gray-800/10 dark:hover:bg-gray-900/40 text-gray-305">
-                    <td className="p-3 font-medium text-gray-400">
+                  <tr key={log.log_id} className={`${isDarkMode ? 'hover:bg-gray-800/10 text-gray-305' : 'hover:bg-gray-900/40 text-white'}`}>
+                    <td className={`p-3 font-medium ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
                       {new Date(log.timestamp).toLocaleString('en-IN', { hour12: false })}
                     </td>
                     <td className="p-3 font-semibold text-axis-burgundy dark:text-red-400">{log.username}</td>
@@ -137,7 +137,7 @@ export default function ObservabilityLogs() {
                         {log.method}
                       </span>
                     </td>
-                    <td className="p-3 font-mono font-bold tracking-tight text-gray-400 select-all">{log.endpoint}</td>
+                    <td className={`p-3 font-mono font-bold tracking-tight ${isDarkMode ? 'text-gray-400' : 'text-gray-600'} select-all`}>{log.endpoint}</td>
                     <td className="p-3">
                       <span className={`font-bold ${isSuccess ? 'text-green-500' : 'text-red-500'}`}>
                         {log.status_code}
@@ -148,7 +148,7 @@ export default function ObservabilityLogs() {
                         {log.latency_ms.toFixed(2)} ms
                       </span>
                     </td>
-                    <td className="p-3 font-mono text-gray-455">{log.client_ip}</td>
+                    <td className={`p-3 font-mono ${isDarkMode ? 'text-gray-455' : 'text-gray-600'}`}>{log.client_ip}</td>
                     <td className="p-3 text-right">
                       {log.payload_summary ? (
                         <button

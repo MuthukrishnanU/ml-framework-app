@@ -40,7 +40,7 @@ export default function ModelLeaderboard() {
 
   const handleTestScore = async () => {
     try {
-      const response = await apiFetch(`${API_BASE_URL}/api/models/${championId}/score`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/predict`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ customer_id: testCustomerId })
@@ -77,7 +77,7 @@ export default function ModelLeaderboard() {
         {/* Active Champion Card */}
         <div className={`p-6 rounded-2xl border flex items-center justify-between shadow-sm ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'}`}>
           <div>
-            <p className="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider">Active Router Champion</p>
+            <p className={`text-xs ${isDarkMode ? 'text-gray-500' : 'text-gray-700'} font-bold uppercase tracking-wider`}>Active Router Champion</p>
             <h3 className="text-2xl font-bold mt-1 text-axis-burgundy dark:text-red-400">
               {models.find(m => m.model_id === championId)?.algorithm_type || 'XGBoost'}
             </h3>
@@ -91,7 +91,7 @@ export default function ModelLeaderboard() {
         {/* Live Performance Card */}
         <div className={`p-6 rounded-2xl border flex items-center justify-between shadow-sm ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'}`}>
           <div>
-            <p className="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider">Champion Live ROC-AUC</p>
+            <p className={`text-xs ${isDarkMode ? 'text-gray-500' : 'text-gray-700'} font-bold uppercase tracking-wider`}>Champion Live ROC-AUC</p>
             <h3 className="text-2xl font-bold mt-1 text-green-500">
               {models.find(m => m.model_id === championId)?.live_metrics.roc_auc || '0.842'}
             </h3>
@@ -105,8 +105,8 @@ export default function ModelLeaderboard() {
         {/* Active settings / mode card */}
         <div className={`p-6 rounded-2xl border flex items-center justify-between shadow-sm ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'}`}>
           <div>
-            <p className="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider">Self-Healing Router Policy</p>
-            <h3 className="text-xl font-bold mt-1 uppercase tracking-wide text-axis-burgundy dark:text-red-300">
+            <p className={`text-xs ${isDarkMode ? 'text-gray-500' : 'text-gray-700'} font-bold uppercase tracking-wider`}>Self-Healing Router Policy</p>
+            <h3 className={`text-xl font-bold mt-1 uppercase tracking-wide ${isDarkMode ? 'text-red-300' : 'text-axis-burgundy'}`}>
               {settings.failover_mode === 'automatic' ? 'Fully Automatic' : 'Semi-Auto (Governance)'}
             </h3>
             <p className="text-[10px] text-gray-400 mt-1">Tolerance Threshold: PSI &ge; 0.25</p>
@@ -120,8 +120,8 @@ export default function ModelLeaderboard() {
       {/* Detailed Scoreboard Table */}
       <div className={`rounded-2xl border shadow-sm ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'}`}>
         <div className="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
-          <h3 className="font-bold text-base text-axis-burgundy dark:text-red-200">Candidate Models Scoreboard</h3>
-          <span className="text-xs text-gray-400 font-medium">Rankings determined by validation scores</span>
+          <h3 className={`font-bold text-base ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'}`}>Candidate Models Scoreboard</h3>
+          <span className={`text-xs font-medium ${isDarkMode ? 'text-gray-400' : 'text-gray-700'}`}>Rankings determined by validation scores</span>
         </div>
 
         <div className="overflow-x-auto">
@@ -171,15 +171,15 @@ export default function ModelLeaderboard() {
                       <div>{model.baselines.pr_auc}</div>
                       <div className="text-[10px] text-blue-400">{model.live_metrics.pr_auc}</div>
                     </td>
-                    <td className="p-4 font-semibold text-gray-300">{model.live_metrics.f1_score}</td>
-                    <td className="p-4 text-gray-400">{model.live_metrics.log_loss}</td>
-                    <td className="p-4 text-gray-400">{model.live_metrics.ks_statistic}</td>
+                    <td className={`p-4 font-semibold ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{model.live_metrics.f1_score}</td>
+                    <td className={`p-4 font-semibold ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{model.live_metrics.log_loss}</td>
+                    <td className={`p-4 font-semibold ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{model.live_metrics.ks_statistic}</td>
                     <td className="p-4">
                       <span className={`px-2 py-0.5 rounded font-mono font-semibold ${model.live_metrics.psi >= 0.25 ? 'bg-red-950 text-red-400 border border-red-900 animate-pulse' : 'bg-gray-800 text-gray-300'}`}>
                         {model.live_metrics.psi || '0.00'}
                       </span>
                     </td>
-                    <td className="p-4 text-gray-400">
+                    <td className={`p-4 font-semibold ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>
                       <div>{model.live_metrics.latency} ms</div>
                       <div className="text-[10px]">{model.live_metrics.memory} MB</div>
                     </td>
@@ -198,7 +198,7 @@ export default function ModelLeaderboard() {
 
       {/* Single Customer Scoring Test Simulator */}
       <div className={`p-6 rounded-2xl border shadow-sm ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'}`}>
-        <h3 className="font-bold text-base text-axis-burgundy dark:text-red-200 mb-2">Live Scorer Playground</h3>
+        <h3 className={`font-bold text-base ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'} mb-2`}>Live Scorer Playground</h3>
         <p className="text-xs text-gray-400 mb-4">Input a Customer ID to score propensity through the active Champion and examine explanation coefficients.</p>
 
         <div className="flex gap-4 max-w-md">
@@ -220,10 +220,10 @@ export default function ModelLeaderboard() {
         {scoreResult && (
           <div className="mt-6 p-4 rounded-xl border border-gray-800 bg-gray-950/40 grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
             <div className="space-y-2">
-              <h4 className="font-bold uppercase tracking-wider text-gray-500">Scoring Response</h4>
+              <h4 className={`font-bold uppercase tracking-wider ${isDarkMode ? 'text-gray-500' : 'text-gray-700'}`}>Scoring Response</h4>
               <div><span className="text-gray-450">Active Model ID:</span> <span className="font-bold text-red-400">{scoreResult.prediction_id}</span></div>
               <div><span className="text-gray-450">Routed Engine:</span> <span className="font-bold text-white">{scoreResult.algorithm_type} (Champion)</span></div>
-              <div><span className="text-gray-450">Propensity Score:</span> <span className="font-bold text-lg text-green-500">{(scoreResult.propensity_score * 100).toFixed(2)}%</span></div>
+              <div><span className="text-gray-450">Propensity Score:</span> <span className={`font-bold text-lg ${isDarkMode ? 'text-green-500' : 'text-green-700'}`}>{(scoreResult.propensity_score * 100).toFixed(2)}%</span></div>
               <div>
                 <span className="text-gray-450">Classification Decision:</span>
                 <span className={`font-bold ml-1.5 px-2 py-0.5 rounded text-[10px] ${scoreResult.label === 1 ? 'bg-green-950 text-green-400' : 'bg-gray-800 text-gray-400'}`}>
@@ -232,11 +232,11 @@ export default function ModelLeaderboard() {
               </div>
             </div>
             <div className="space-y-2">
-              <h4 className="font-bold uppercase tracking-wider text-gray-500">Explainability Factors (Top 3 Coefficients)</h4>
-              <div className="space-y-1 font-mono text-gray-300">
-                <div>1. Credit Score Impact: <span className={scoreResult.explanation_coefficients[0] >= 0 ? 'text-green-400' : 'text-red-400'}>{scoreResult.explanation_coefficients[0]}</span></div>
-                <div>2. Income Impact: <span className={scoreResult.explanation_coefficients[1] >= 0 ? 'text-green-400' : 'text-red-400'}>{scoreResult.explanation_coefficients[1]}</span></div>
-                <div>3. Late Payments Impact: <span className={scoreResult.explanation_coefficients[2] >= 0 ? 'text-green-400' : 'text-red-400'}>{scoreResult.explanation_coefficients[2]}</span></div>
+              <h4 className={`font-bold uppercase tracking-wider ${isDarkMode ? 'text-gray-500' : 'text-gray-700'}`}>Explainability Factors (Top 3 Coefficients)</h4>
+              <div className="space-y-1 font-mono text-gray-600">
+                <div>1. Credit Score Impact: <span className={scoreResult.explanation_coefficients[0] >= 0 ? 'text-green-600' : 'text-red-400'}>{scoreResult.explanation_coefficients[0]}</span></div>
+                <div>2. Income Impact: <span className={scoreResult.explanation_coefficients[1] >= 0 ? 'text-green-600' : 'text-red-400'}>{scoreResult.explanation_coefficients[1]}</span></div>
+                <div>3. Late Payments Impact: <span className={scoreResult.explanation_coefficients[2] >= 0 ? 'text-green-600' : 'text-red-400'}>{scoreResult.explanation_coefficients[2]}</span></div>
               </div>
             </div>
           </div>

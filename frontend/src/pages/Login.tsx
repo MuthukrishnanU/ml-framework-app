@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAppContext, API_BASE_URL } from '../context/AppContext';
 import { useNavigate } from 'react-router-dom';
+import { Sun, Moon } from 'lucide-react';
 
 export default function Login() {
   const {
@@ -10,7 +11,8 @@ export default function Login() {
     setUsername: setGlobalUsername,
     setUserRole,
     setFullName,
-    isDarkMode
+    isDarkMode,
+    setIsDarkMode
   } = useAppContext();
 
   const [username, setLocalUsername] = useState('');
@@ -51,7 +53,23 @@ export default function Login() {
   };
 
   return (
-    <div className={`min-h-screen flex items-center justify-center transition-colors duration-200 ${isDarkMode ? 'bg-gray-950 text-gray-100' : 'bg-gray-100 text-gray-900'}`}>
+    <div className={`min-h-screen flex items-center justify-center relative transition-colors duration-200 ${isDarkMode ? 'bg-gray-950 text-gray-100' : 'bg-gray-100 text-gray-900'}`}>
+      
+      {/* Absolute theme toggle button */}
+      <div className="absolute top-6 right-6">
+        <button
+          onClick={() => setIsDarkMode(!isDarkMode)}
+          className={`p-2.5 rounded-lg border transition-all duration-200 cursor-pointer shadow-md ${
+            isDarkMode 
+              ? 'bg-gray-900 border-gray-800 text-white hover:bg-gray-800' 
+              : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+          }`}
+          title="Toggle theme mode"
+        >
+          {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
+        </button>
+      </div>
+
       <div className={`w-full max-w-md p-8 rounded-2xl shadow-2xl border transition-colors duration-200 ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'}`}>
         <div className="flex justify-center mb-6">
           <div className="w-12 h-12 rounded-xl bg-axis-burgundy flex items-center justify-center text-white font-bold text-xl shadow-lg">
@@ -76,7 +94,7 @@ export default function Login() {
               onChange={(e) => setLocalUsername(e.target.value)}
               placeholder="e.g. admin or ds_lead"
               required
-              className={`w-full px-4 py-2.5 rounded-lg border focus:ring-2 focus:ring-axis-burgundy focus:outline-none text-sm transition-colors duration-200 ${isDarkMode ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500' : 'bg-gray-50 border-gray-300 text-black placeholder-gray-400'}`}
+              className={`w-full px-4 py-2.5 rounded-lg border focus:ring-2 focus:ring-axis-burgundy focus:outline-none text-sm transition-colors duration-200 ${isDarkMode ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500' : 'bg-gray-50 border-gray-305 text-black placeholder-gray-405'}`}
             />
           </div>
           <div>
@@ -87,12 +105,12 @@ export default function Login() {
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Password"
               required
-              className={`w-full px-4 py-2.5 rounded-lg border focus:ring-2 focus:ring-axis-burgundy focus:outline-none text-sm transition-colors duration-200 ${isDarkMode ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500' : 'bg-gray-50 border-gray-300 text-black'}`}
+              className={`w-full px-4 py-2.5 rounded-lg border focus:ring-2 focus:ring-axis-burgundy focus:outline-none text-sm transition-colors duration-200 ${isDarkMode ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500' : 'bg-gray-50 border-gray-305 text-black'}`}
             />
           </div>
           <button
             type="submit"
-            className="w-full py-3 bg-axis-burgundy hover:bg-axis-burgundy-hover text-white font-semibold rounded-lg shadow-lg hover:shadow-xl transition-all duration-200 transform hover:-translate-y-0.5"
+            className="w-full py-3 bg-axis-burgundy hover:bg-axis-burgundy-hover text-white font-semibold rounded-lg shadow-lg hover:shadow-xl transition-all duration-200 transform hover:-translate-y-0.5 cursor-pointer"
           >
             Sign In
           </button>

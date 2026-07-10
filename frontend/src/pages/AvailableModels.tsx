@@ -141,7 +141,7 @@ export default function AvailableModels() {
                     studioScoreboard.map((row, index) => (
                       <tr key={index} className={`hover:bg-gray-800/10 dark:hover:bg-gray-900/40 text-gray-300`}>
                         <td className="p-3 font-mono font-bold text-axis-burgundy dark:text-red-400">{row.model_id}</td>
-                        <td className="p-3 font-medium">{row.algorithm_type}</td>
+                        <td className={`p-3 font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{row.algorithm_type}</td>
                         <td className="p-3">
                           <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-green-950 text-green-300 border border-green-900">
                             {row.status}
@@ -149,7 +149,7 @@ export default function AvailableModels() {
                         </td>
                         <td className="p-3 font-bold text-green-500">{row.auc.toFixed(4)}</td>
                         <td className="p-3 font-medium text-blue-400">{row.fairness_adverse_impact_ratio.toFixed(4)}</td>
-                        <td className="p-3 font-medium">{row.latency_ms.toFixed(2)} ms</td>
+                        <td className={`p-3 font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{row.latency_ms.toFixed(2)} ms</td>
                       </tr>
                     ))
                   )}
@@ -199,7 +199,7 @@ export default function AvailableModels() {
                               ) : isPercentage ? (
                                 <span className="text-green-500 font-bold">{displayVal}</span>
                               ) : isLast && row.length === 8 ? (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-axis-burgundy/10 dark:bg-red-950/40 text-axis-burgundy dark:text-red-300 border border-red-900/20">
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-axis-burgundy/10 dark:bg-red-950/40 ${isDarkMode ? 'text-red-300' : 'text-axis-burgundy'} border border-red-900/20`}>
                                   {displayVal}
                                 </span>
                               ) : (

@@ -118,8 +118,15 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [fullName, setFullName] = useState<string>(() => {
     return localStorage.getItem('fullName') || '';
   });
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    const saved = localStorage.getItem('isDarkMode');
+    return saved !== null ? saved === 'true' : false;
+  });
   const [apiLoading, setApiLoading] = useState<boolean>(false);
+
+  useEffect(() => {
+    localStorage.setItem('isDarkMode', String(isDarkMode));
+  }, [isDarkMode]);
   
   const [models, setModels] = useState<ModelMetadata[]>([]);
   const [championId, setChampionId] = useState<string>('');
