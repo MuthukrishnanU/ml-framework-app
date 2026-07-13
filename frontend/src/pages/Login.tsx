@@ -120,9 +120,9 @@ export default function Login() {
           </button>
         </form>
 
-        <div className="mt-6 border-t border-gray-800 pt-4 text-center text-xs text-gray-500">
+        {/* <div className="mt-6 border-t border-gray-800 pt-4 text-center text-xs text-gray-500">
           Authorized Personnel Only
-        </div>
+        </div> */}
       </div>
       {apiLoading && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gray-950/80 backdrop-blur-sm">
