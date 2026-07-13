@@ -22,7 +22,7 @@ export default function Login() {
   const userRef = useRef(null);
 
   useEffect(() => {
-    userRef.current.focus();
+    (!!userRef && !!userRef.current) && userRef.current.focus();
   }, [])
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,8 +64,8 @@ export default function Login() {
         <button
           onClick={() => setIsDarkMode(!isDarkMode)}
           className={`p-2.5 rounded-lg border transition-all duration-200 cursor-pointer shadow-md ${isDarkMode
-              ? 'bg-gray-900 border-gray-800 text-white hover:bg-gray-800'
-              : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+            ? 'bg-gray-900 border-gray-800 text-white hover:bg-gray-800'
+            : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
             }`}
           title="Toggle theme mode"
         >
