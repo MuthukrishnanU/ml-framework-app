@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAppContext, API_BASE_URL } from '../context/AppContext';
 import { useNavigate } from 'react-router-dom';
 import { Sun, Moon } from 'lucide-react';
@@ -19,7 +19,11 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const navigate = useNavigate();
+  const userRef = useRef(null);
 
+  useEffect(() => {
+    userRef.current.focus();
+  }, [])
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -35,13 +39,13 @@ export default function Login() {
         setFullName(data.full_name);
         setGlobalUsername(data.username);
         setIsAuthenticated(true);
-        
+
         // Persist session in localStorage
         localStorage.setItem('isAuthenticated', 'true');
         localStorage.setItem('username', data.username);
         localStorage.setItem('userRole', data.role);
         localStorage.setItem('fullName', data.full_name);
-        
+
         navigate('/leaderboard');
       } else {
         const errorData = await response.json();
@@ -54,16 +58,15 @@ export default function Login() {
 
   return (
     <div className={`min-h-screen flex items-center justify-center relative transition-colors duration-200 ${isDarkMode ? 'bg-gray-950 text-gray-100' : 'bg-gray-100 text-gray-900'}`}>
-      
+
       {/* Absolute theme toggle button */}
       <div className="absolute top-6 right-6">
         <button
           onClick={() => setIsDarkMode(!isDarkMode)}
-          className={`p-2.5 rounded-lg border transition-all duration-200 cursor-pointer shadow-md ${
-            isDarkMode 
-              ? 'bg-gray-900 border-gray-800 text-white hover:bg-gray-800' 
+          className={`p-2.5 rounded-lg border transition-all duration-200 cursor-pointer shadow-md ${isDarkMode
+              ? 'bg-gray-900 border-gray-800 text-white hover:bg-gray-800'
               : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
-          }`}
+            }`}
           title="Toggle theme mode"
         >
           {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
@@ -91,6 +94,7 @@ export default function Login() {
             <input
               type="text"
               value={username}
+              ref={userRef}
               onChange={(e) => setLocalUsername(e.target.value)}
               placeholder="e.g. admin or ds_lead"
               required
