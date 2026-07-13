@@ -24,3 +24,24 @@ And, we can have another Dropdown to select the available algorithms..
 And, a submit button would train the selected algorithm and show results..
 Please correct me if I'm going in the wrong direction & Provide your suggestions (in building a feature for Models)
 
+ToDo13Jul26:
+(1) Please refer to the attached screnshot..
+In this section of "Base Pull", every little change in the form in UI is making an API call (/api/segmentation/base_pull_review)..
+Some of the users of this app are not entirely happy with this..
+Can we set the form values (age range, minimum annual income, minimum credit score and gender) first & on click of the submit button make this API call?..
+Once the API call is made, disable the submit button & enable it again either if the user changes any of form values or if the user comes back to this step (Base Pull) from any of the future steps..
+Please confirm if this is possible..
+
+(2) Ok, for the "Minimum Credit Score" field.. the slider is amazing, but instead of having a text field (which displays the selected value from slider).. can we have an input field (so that users who are not much comfortable with the slider can edit the input field and provide the form value)?
+
+(3) Great! now please refer to the attached screenshot for step 2 (Feature Selection).. This UI for field selection is great..
+But I want to have a provision for uploading/copy-pasting/typing a PySpark template for "Feature Selection"..
+Can we have a radio-button/tabs based selection (after the title "Feature Store Variable Selector") to let the user chose features selection from a UI or PySpark Template?..
+Basically, we will have 2 radio-buttons or tabs with labels "App based Feature Selection" and "PySpark Template based Feature Selection".
+The "App based Feature Selection" will be selected by default - which will display the existing content for feature selection (as per attached screenshot).
+If user clicks "PySpark Template based Feature Selection", we must have 2 halves of the section - the left side will have the PySpark Template & right side will show the selected features along with "Reduce Features & Impute" button.
+In the left side, we must give a textarea for user to type or copy-paste their PySpark Template.
+Additionally in the left side, we must give a provision to upload a PySpark Template and auto-populate the textarea field with the contents of the uploaded PySpark Template.
+Furthermore, a submit button (at the bottom of left side) will process the PySpark Template from the textarea field and display the features in the right side in a similar existing manner (as per attached screenshot).
+Only after viewing the right-side content, the user can click on "Reduce Features & Impute" button to proceed to the next step.
+Provide code changes for the same.

@@ -16,6 +16,47 @@ export default function MLPipelineStudio() {
     credit_score_min: 300,
     gender: 'All'
   });
+  const [formFilters, setFormFilters] = useState({
+    age_min: 18,
+    age_max: 85,
+    income_min: 0,
+    credit_score_min: 300,
+    gender: 'All'
+  });
+  const [submitDisabled, setSubmitDisabled] = useState<boolean>(false);
+  const [basePullLoading, setBasePullLoading] = useState<boolean>(false);
+  const [prevStep, setPrevStep] = useState<number>(1);
+  const [featureSelectionMode, setFeatureSelectionMode] = useState<'app' | 'pyspark'>('app');
+  const [pysparkTemplate, setPysparkTemplate] = useState<string>(`# PySpark Feature Selection Template
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
+
+def feature_selection_pipeline(spark_session: SparkSession, input_table: str) -> pyspark.sql.DataFrame:
+    # 1. Load the active cohort dataset
+    cohort_df = spark_session.table(input_table)
+    
+    # 2. Define selected features
+    selected_columns = [
+        "age",
+        "annual_income",
+        "credit_score",
+        "credit_limit",
+        "monthly_spend",
+        "average_utilization",
+        "payment_delay_days",
+        "active_loans_count",
+        "total_outstanding_loan",
+        "average_interest_rate",
+        "monthly_loan_emi",
+        "mutual_fund_holdings",
+        "equity_portfolio_value",
+        "fixed_deposit_balance",
+        "monthly_sip_amount"
+    ]
+    
+    return cohort_df.select(*selected_columns)
+`);
+  const [pysparkProcessed, setPysparkProcessed] = useState<boolean>(false);
   const [pipelineBaseCount, setPipelineBaseCount] = useState<number>(0);
   const [pipelineSelectedFeatures, setPipelineSelectedFeatures] = useState<string[]>([
     "age", "annual_income", "credit_score", "credit_limit", "monthly_spend",
@@ -41,9 +82,71 @@ export default function MLPipelineStudio() {
   const [pipelineCorrMatrix, setPipelineCorrMatrix] = useState<{ columns: string[], matrix: number[][] }>({ columns: [], matrix: [] });
   const [pipelineLoading, setPipelineLoading] = useState<boolean>(false);
 
-  // Debounced Base Pull count preview
+  // Helper to parse features from PySpark template
+  const parseFeaturesFromPySpark = (code: string): string[] => {
+    // 1. Try to find list assignments (e.g. selected_columns = [...], selected_features = [...], columns = [...], features = [...])
+    const listRegex = /(selected_columns|selected_features|columns|features)\s*=\s*\[([\s\S]*?)\]/gi;
+    const match = listRegex.exec(code);
+    
+    if (match) {
+      const listContent = match[2];
+      const stringRegex = /['"]([a-zA-Z0-9_-]+)['"]/g;
+      const found = new Set<string>();
+      let strMatch;
+      while ((strMatch = stringRegex.exec(listContent)) !== null) {
+        found.add(strMatch[1]);
+      }
+      if (found.size > 0) {
+        return Array.from(found);
+      }
+    }
+    
+    // 2. Fallback: Scan the entire code for any quoted strings, ignoring common keywords/imports
+    const stringRegex = /['"]([a-zA-Z0-9_-]+)['"]/g;
+    const found = new Set<string>();
+    let strMatch;
+    const ignoredWords = ["pyspark.sql", "SparkSession", "col", "table", "pyspark", "input_table", "select", "credit_card", "mutual_funds", "loans", "defaulter"];
+    while ((strMatch = stringRegex.exec(code)) !== null) {
+      const word = strMatch[1];
+      if (!ignoredWords.includes(word) && !word.includes("/") && word.length > 1) {
+        found.add(word);
+      }
+    }
+    return Array.from(found);
+  };
+
+  // Submit PySpark template to extract features
+  const handleSubmitPySparkTemplate = () => {
+    const parsed = parseFeaturesFromPySpark(pysparkTemplate);
+    setPipelineSelectedFeatures(parsed);
+    setPysparkProcessed(true);
+  };
+
+  // Submit demographic filters manually
+  const handleSubmitFilters = async () => {
+    setBasePullLoading(true);
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/api/segmentation/base_pull_preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formFilters)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPipelineBaseCount(data.count);
+        setPipelineBaseFilters(formFilters);
+        setSubmitDisabled(true);
+      }
+    } catch (e) {
+      console.error("Failed to apply base pull filters", e);
+    } finally {
+      setBasePullLoading(false);
+    }
+  };
+
+  // Initial fetch on component mount to show the default cohort size
   useEffect(() => {
-    const fetchBaseCount = async () => {
+    const fetchInitialCount = async () => {
       try {
         const res = await apiFetch(`${API_BASE_URL}/api/segmentation/base_pull_preview`, {
           method: 'POST',
@@ -55,13 +158,19 @@ export default function MLPipelineStudio() {
           setPipelineBaseCount(data.count);
         }
       } catch (e) {
-        console.error("Failed to load base pull preview count", e);
+        console.error("Failed to load initial base pull preview count", e);
       }
     };
+    fetchInitialCount();
+  }, []);
 
-    const timer = setTimeout(fetchBaseCount, 300);
-    return () => clearTimeout(timer);
-  }, [pipelineBaseFilters]);
+  // Monitor step change to re-enable apply button if coming back to Step 1 from a future step
+  useEffect(() => {
+    if (pipelineStep === 1 && prevStep > 1) {
+      setSubmitDisabled(false);
+    }
+    setPrevStep(pipelineStep);
+  }, [pipelineStep, prevStep]);
 
   // Fetch Feature Reduction stats and matrix
   const fetchFeatureReductionPreview = async () => {
@@ -180,15 +289,21 @@ export default function MLPipelineStudio() {
               <div className="flex gap-4 items-center">
                 <input
                   type="number"
-                  value={pipelineBaseFilters.age_min}
-                  onChange={(e) => setPipelineBaseFilters(prev => ({ ...prev, age_min: Math.max(18, parseInt(e.target.value || '18', 10)) }))}
+                  value={formFilters.age_min}
+                  onChange={(e) => {
+                    setFormFilters(prev => ({ ...prev, age_min: Math.max(18, parseInt(e.target.value || '18', 10)) }));
+                    setSubmitDisabled(false);
+                  }}
                   className={`w-20 px-2 py-1 text-xs rounded border focus:outline-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
                 />
                 <span className="text-gray-500">to</span>
                 <input
                   type="number"
-                  value={pipelineBaseFilters.age_max}
-                  onChange={(e) => setPipelineBaseFilters(prev => ({ ...prev, age_max: Math.min(100, parseInt(e.target.value || '100', 10)) }))}
+                  value={formFilters.age_max}
+                  onChange={(e) => {
+                    setFormFilters(prev => ({ ...prev, age_max: Math.min(100, parseInt(e.target.value || '100', 10)) }));
+                    setSubmitDisabled(false);
+                  }}
                   className={`w-20 px-2 py-1 text-xs rounded border focus:outline-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
                 />
               </div>
@@ -198,25 +313,48 @@ export default function MLPipelineStudio() {
               <label className="text-xs font-semibold text-gray-450 block">Minimum Annual Income (₹)</label>
               <input
                 type="number"
-                value={pipelineBaseFilters.income_min}
-                onChange={(e) => setPipelineBaseFilters(prev => ({ ...prev, income_min: parseFloat(e.target.value || '0') }))}
+                value={formFilters.income_min}
+                onChange={(e) => {
+                  setFormFilters(prev => ({ ...prev, income_min: parseFloat(e.target.value || '0') }));
+                  setSubmitDisabled(false);
+                }}
                 className={`w-full px-3 py-1.5 text-xs rounded border focus:outline-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
               />
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-gray-450 block">Minimum Credit Score</label>
+              <div className="flex justify-between items-center">
+                <label className="text-xs font-semibold text-gray-450">Minimum Credit Score</label>
+                <input
+                  type="number"
+                  min="300"
+                  max="850"
+                  value={formFilters.credit_score_min}
+                  onChange={(e) => {
+                    const parsed = parseInt(e.target.value, 10);
+                    setFormFilters(prev => ({ ...prev, credit_score_min: isNaN(parsed) ? 300 : parsed }));
+                    setSubmitDisabled(false);
+                  }}
+                  onBlur={(e) => {
+                    const val = Math.max(300, Math.min(850, parseInt(e.target.value || '300', 10)));
+                    setFormFilters(prev => ({ ...prev, credit_score_min: val }));
+                  }}
+                  className={`w-16 px-2 py-0.5 text-xs text-right rounded border focus:outline-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
+                />
+              </div>
               <input
                 type="range"
                 min="300"
                 max="850"
-                value={pipelineBaseFilters.credit_score_min}
-                onChange={(e) => setPipelineBaseFilters(prev => ({ ...prev, credit_score_min: parseInt(e.target.value, 10) }))}
+                value={formFilters.credit_score_min}
+                onChange={(e) => {
+                  setFormFilters(prev => ({ ...prev, credit_score_min: parseInt(e.target.value, 10) }));
+                  setSubmitDisabled(false);
+                }}
                 className="w-full accent-axis-burgundy"
               />
               <div className="flex justify-between text-[10px] font-mono text-gray-550">
                 <span>300 (Poor)</span>
-                <span className={`font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{pipelineBaseFilters.credit_score_min}</span>
                 <span>850 (Excellent)</span>
               </div>
             </div>
@@ -224,8 +362,11 @@ export default function MLPipelineStudio() {
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-gray-450 block">Gender</label>
               <select
-                value={pipelineBaseFilters.gender}
-                onChange={(e) => setPipelineBaseFilters(prev => ({ ...prev, gender: e.target.value }))}
+                value={formFilters.gender}
+                onChange={(e) => {
+                  setFormFilters(prev => ({ ...prev, gender: e.target.value }));
+                  setSubmitDisabled(false);
+                }}
                 className={`w-full px-3 py-1.5 text-xs rounded border focus:outline-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
               >
                 <option value="All">All</option>
@@ -233,6 +374,14 @@ export default function MLPipelineStudio() {
                 <option value="Female">Female</option>
               </select>
             </div>
+
+            <button
+              onClick={handleSubmitFilters}
+              disabled={submitDisabled || basePullLoading}
+              className="w-full py-2 bg-axis-burgundy hover:bg-axis-burgundy-hover text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-md transition-all disabled:opacity-40 cursor-pointer mt-4"
+            >
+              {basePullLoading ? 'Applying Filters...' : 'Apply Filters'}
+            </button>
           </div>
 
           {/* Cohort Size Preview */}
@@ -249,12 +398,17 @@ export default function MLPipelineStudio() {
                 <div className="flex justify-between"><span className="text-gray-450">Active Filters:</span> <span className="font-mono text-axis-burgundy dark:text-red-300 text-[10px] truncate max-w-[200px]">
                   {`Age: [${pipelineBaseFilters.age_min}-${pipelineBaseFilters.age_max}], Income: >=₹${pipelineBaseFilters.income_min.toLocaleString()}, Credit: >=${pipelineBaseFilters.credit_score_min}, Gender: ${pipelineBaseFilters.gender}`}
                 </span></div>
+                {JSON.stringify(formFilters) !== JSON.stringify(pipelineBaseFilters) && (
+                  <div className="text-amber-500 font-bold mt-2 text-[10px] animate-pulse">
+                    * Filters modified. Click "Apply Filters" to update cohort size.
+                  </div>
+                )}
               </div>
             </div>
 
             <button
               onClick={() => setPipelineStep(2)}
-              disabled={pipelineBaseCount === 0}
+              disabled={pipelineBaseCount === 0 || JSON.stringify(formFilters) !== JSON.stringify(pipelineBaseFilters)}
               className="w-full py-2.5 mt-6 bg-axis-burgundy hover:bg-axis-burgundy-hover text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-md transition-all disabled:opacity-40 cursor-pointer"
             >
               Configure Target Features &rarr;
@@ -266,107 +420,287 @@ export default function MLPipelineStudio() {
       {/* Step 2: Feature Selection */}
       {pipelineStep === 2 && (
         <div className="space-y-6">
-          <div className={`p-5 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} space-y-4`}>
-            <div className="flex justify-between items-center">
-              <h3 className={`font-bold text-sm ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'}`}>Feature Store Variable Selector</h3>
-              <div className="flex gap-2">
+          <div className={`p-5 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} space-y-6`}>
+            {/* Header with Mode Switcher */}
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-gray-805/40">
+              <div className="flex flex-col gap-1">
+                <h3 className={`font-bold text-sm ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'}`}>Feature Store Variable Selector</h3>
+                <span className="text-[10px] text-gray-500 font-medium">Choose between configuring features visually or using a PySpark data pipeline code template.</span>
+              </div>
+              
+              <div className="flex bg-gray-900/60 border border-gray-800/80 p-0.5 rounded-lg text-[10px] font-bold uppercase tracking-wider select-none">
                 <button
-                  onClick={() => setPipelineSelectedFeatures([
-                    "age", "annual_income", "credit_score", "credit_limit", "monthly_spend",
-                    "average_utilization", "payment_delay_days", "active_loans_count",
-                    "total_outstanding_loan", "average_interest_rate", "monthly_loan_emi",
-                    "mutual_fund_holdings", "equity_portfolio_value", "fixed_deposit_balance",
-                    "monthly_sip_amount"
-                  ])}
-                  className="text-xs text-blue-400 hover:underline cursor-pointer bg-transparent border-0"
+                  onClick={() => setFeatureSelectionMode('app')}
+                  className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${featureSelectionMode === 'app' ? 'bg-axis-burgundy text-white shadow' : 'text-gray-400 hover:text-gray-250'}`}
                 >
-                  Select All
+                  App based Selection
                 </button>
-                <span className="text-gray-555">|</span>
                 <button
-                  onClick={() => setPipelineSelectedFeatures([])}
-                  className="text-xs text-blue-400 hover:underline cursor-pointer bg-transparent border-0"
+                  onClick={() => setFeatureSelectionMode('pyspark')}
+                  className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${featureSelectionMode === 'pyspark' ? 'bg-axis-burgundy text-white shadow' : 'text-gray-400 hover:text-gray-250'}`}
                 >
-                  Clear All
+                  PySpark Template based
                 </button>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {[
-                {
-                  group: "Demographics",
-                  items: [
-                    { id: "age", label: "Customer Age", type: "INT", sens: "Low" },
-                    { id: "annual_income", label: "Annual Income", type: "NUMERIC", sens: "High" },
-                    { id: "credit_score", label: "Credit Score", type: "INT", sens: "High" }
-                  ]
-                },
-                {
-                  group: "Credit Card History",
-                  items: [
-                    { id: "credit_limit", label: "Credit Limit", type: "NUMERIC", sens: "High" },
-                    { id: "monthly_spend", label: "Monthly Spend", type: "NUMERIC", sens: "Low" },
-                    { id: "average_utilization", label: "Utilization Ratio", type: "NUMERIC", sens: "Low" },
-                    { id: "payment_delay_days", label: "Payment Delays", type: "INT", sens: "Critical" }
-                  ]
-                },
-                {
-                  group: "Loan Details",
-                  items: [
-                    { id: "active_loans_count", label: "Active Loans", type: "INT", sens: "Low" },
-                    { id: "total_outstanding_loan", label: "Outstanding Loan", type: "NUMERIC", sens: "High" },
-                    { id: "average_interest_rate", label: "Interest Rate", type: "NUMERIC", sens: "Low" },
-                    { id: "monthly_loan_emi", label: "Monthly EMI", type: "NUMERIC", sens: "High" }
-                  ]
-                },
-                {
-                  group: "Investment Profiles",
-                  items: [
-                    { id: "mutual_fund_holdings", label: "Mutual Funds", type: "NUMERIC", sens: "High" },
-                    { id: "equity_portfolio_value", label: "Equity Value", type: "NUMERIC", sens: "High" },
-                    { id: "fixed_deposit_balance", label: "FD Balance", type: "NUMERIC", sens: "High" },
-                    { id: "monthly_sip_amount", label: "SIP Amount", type: "NUMERIC", sens: "Low" }
-                  ]
-                }
-              ].map((grp) => (
-                <div key={grp.group} className="space-y-2 border-r border-gray-850/40 pr-2 last:border-r-0">
-                  <h4 className="text-xs uppercase text-gray-450 font-bold tracking-wider">{grp.group}</h4>
-                  <div className="space-y-2">
-                    {grp.items.map((item) => {
-                      const isChecked = pipelineSelectedFeatures.includes(item.id);
-                      return (
-                        <label key={item.id} className="flex items-start gap-2.5 p-2 rounded bg-gray-900/30 border border-transparent hover:border-gray-800 cursor-pointer select-none">
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={() => {
-                              if (isChecked) {
-                                setPipelineSelectedFeatures(prev => prev.filter(x => x !== item.id));
-                              } else {
-                                setPipelineSelectedFeatures(prev => [...prev, item.id]);
-                              }
-                            }}
-                            className="rounded border-gray-700 text-axis-burgundy focus:ring-axis-burgundy mt-0.5"
-                          />
-                          <div className="text-[10px]">
-                            <div className={`font-semibold ${isDarkMode ? 'text-white' : 'text-black'}`}>{item.label}</div>
-                            <div className="flex gap-2 text-[8px] mt-0.5 text-gray-500 font-mono">
-                              <span>{item.type}</span>
-                              <span className={item.sens === 'Critical' ? 'text-red-400' : item.sens === 'High' ? 'text-amber-500' : 'text-gray-600'}>
-                                {item.sens}
-                              </span>
-                            </div>
-                          </div>
-                        </label>
-                      );
-                    })}
-                  </div>
+            {/* Mode 1: App based Selection (Checkboxes) */}
+            {featureSelectionMode === 'app' && (
+              <div className="space-y-4">
+                <div className="flex justify-end gap-2 text-xs">
+                  <button
+                    onClick={() => setPipelineSelectedFeatures([
+                      "age", "annual_income", "credit_score", "credit_limit", "monthly_spend",
+                      "average_utilization", "payment_delay_days", "active_loans_count",
+                      "total_outstanding_loan", "average_interest_rate", "monthly_loan_emi",
+                      "mutual_fund_holdings", "equity_portfolio_value", "fixed_deposit_balance",
+                      "monthly_sip_amount"
+                    ])}
+                    className="text-xs text-blue-400 hover:underline cursor-pointer bg-transparent border-0"
+                  >
+                    Select All
+                  </button>
+                  <span className="text-gray-555">|</span>
+                  <button
+                    onClick={() => setPipelineSelectedFeatures([])}
+                    className="text-xs text-blue-400 hover:underline cursor-pointer bg-transparent border-0"
+                  >
+                    Clear All
+                  </button>
                 </div>
-              ))}
-            </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {[
+                    {
+                      group: "Demographics",
+                      items: [
+                        { id: "age", label: "Customer Age", type: "INT", sens: "Low" },
+                        { id: "annual_income", label: "Annual Income", type: "NUMERIC", sens: "High" },
+                        { id: "credit_score", label: "Credit Score", type: "INT", sens: "High" }
+                      ]
+                    },
+                    {
+                      group: "Credit Card History",
+                      items: [
+                        { id: "credit_limit", label: "Credit Limit", type: "NUMERIC", sens: "High" },
+                        { id: "monthly_spend", label: "Monthly Spend", type: "NUMERIC", sens: "Low" },
+                        { id: "average_utilization", label: "Utilization Ratio", type: "NUMERIC", sens: "Low" },
+                        { id: "payment_delay_days", label: "Payment Delays", type: "INT", sens: "Critical" }
+                      ]
+                    },
+                    {
+                      group: "Loan Details",
+                      items: [
+                        { id: "active_loans_count", label: "Active Loans", type: "INT", sens: "Low" },
+                        { id: "total_outstanding_loan", label: "Outstanding Loan", type: "NUMERIC", sens: "High" },
+                        { id: "average_interest_rate", label: "Interest Rate", type: "NUMERIC", sens: "Low" },
+                        { id: "monthly_loan_emi", label: "Monthly EMI", type: "NUMERIC", sens: "High" }
+                      ]
+                    },
+                    {
+                      group: "Investment Profiles",
+                      items: [
+                        { id: "mutual_fund_holdings", label: "Mutual Funds", type: "NUMERIC", sens: "High" },
+                        { id: "equity_portfolio_value", label: "Equity Value", type: "NUMERIC", sens: "High" },
+                        { id: "fixed_deposit_balance", label: "FD Balance", type: "NUMERIC", sens: "High" },
+                        { id: "monthly_sip_amount", label: "SIP Amount", type: "NUMERIC", sens: "Low" }
+                      ]
+                    }
+                  ].map((grp) => (
+                    <div key={grp.group} className="space-y-2 border-r border-gray-850/40 pr-2 last:border-r-0">
+                      <h4 className="text-xs uppercase text-gray-450 font-bold tracking-wider">{grp.group}</h4>
+                      <div className="space-y-2">
+                        {grp.items.map((item) => {
+                          const isChecked = pipelineSelectedFeatures.includes(item.id);
+                          return (
+                            <label key={item.id} className="flex items-start gap-2.5 p-2 rounded bg-gray-900/30 border border-transparent hover:border-gray-800 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => {
+                                  if (isChecked) {
+                                    setPipelineSelectedFeatures(prev => prev.filter(x => x !== item.id));
+                                  } else {
+                                    setPipelineSelectedFeatures(prev => [...prev, item.id]);
+                                  }
+                                }}
+                                className="rounded border-gray-700 text-axis-burgundy focus:ring-axis-burgundy mt-0.5"
+                              />
+                              <div className="text-[10px]">
+                                <div className={`font-semibold ${isDarkMode ? 'text-white' : 'text-black'}`}>{item.label}</div>
+                                <div className="flex gap-2 text-[8px] mt-0.5 text-gray-555 font-mono">
+                                  <span>{item.type}</span>
+                                  <span className={item.sens === 'Critical' ? 'text-red-400' : item.sens === 'High' ? 'text-amber-500' : 'text-gray-600'}>
+                                    {item.sens}
+                                  </span>
+                                </div>
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Mode 2: PySpark Template based Selection (Split View) */}
+            {featureSelectionMode === 'pyspark' && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Left Side: Code Editor & Upload */}
+                <div className="space-y-4 pr-0 lg:pr-6 border-r-0 lg:border-r border-gray-800/40">
+                  <div className="flex items-center justify-between gap-4">
+                    <label className="text-xs font-semibold text-gray-450">PySpark Template Code</label>
+                    <label className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold text-gray-300 bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-gray-600 rounded-md cursor-pointer select-none transition-all">
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                      </svg>
+                      Upload File
+                      <input
+                        type="file"
+                        accept=".py,.txt"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onload = (event) => {
+                              const text = event.target?.result as string;
+                              setPysparkTemplate(text);
+                              setPysparkProcessed(false);
+                            };
+                            reader.readAsText(file);
+                          }
+                        }}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+
+                  <textarea
+                    value={pysparkTemplate}
+                    onChange={(e) => {
+                      setPysparkTemplate(e.target.value);
+                      setPysparkProcessed(false);
+                    }}
+                    placeholder="# Paste your PySpark code here..."
+                    className={`w-full h-80 font-mono text-xs p-3 rounded-lg border focus:outline-none resize-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-green-400' : 'bg-gray-50 border-gray-300 text-gray-800'}`}
+                  />
+
+                  <button
+                    onClick={handleSubmitPySparkTemplate}
+                    className="w-full py-2.5 bg-axis-burgundy hover:bg-axis-burgundy-hover text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-md transition-all cursor-pointer"
+                  >
+                    Submit Template & Parse Features
+                  </button>
+                </div>
+
+                {/* Right Side: Parsed Features Preview */}
+                <div className="flex flex-col justify-between space-y-4">
+                  {!pysparkProcessed ? (
+                    <div className="flex flex-col items-center justify-center h-full min-h-[300px] p-8 text-center bg-gray-900/10 border border-dashed border-gray-800 rounded-xl space-y-3">
+                      <div className="p-3 bg-gray-800/40 rounded-full text-amber-500">
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                      </div>
+                      <h4 className="text-xs font-bold text-gray-355">Template Pending Submission</h4>
+                      <p className="text-[10px] text-gray-500 max-w-[240px] leading-relaxed">
+                        Please edit/upload your PySpark template and click <strong>Submit Template</strong> on the left to extract the selected features.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-xs uppercase font-bold tracking-widest text-gray-450">Parsed Features Preview</h4>
+                        <span className="bg-green-950/40 text-green-400 border border-green-900/30 text-[9px] font-mono px-2 py-0.5 rounded font-bold">
+                          {pipelineSelectedFeatures.length} Features Extracted
+                        </span>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {(() => {
+                          const categories = [
+                            {
+                              name: "Demographics",
+                              items: [
+                                { id: "age", label: "Customer Age" },
+                                { id: "annual_income", label: "Annual Income" },
+                                { id: "credit_score", label: "Credit Score" }
+                              ]
+                            },
+                            {
+                              name: "Credit Card History",
+                              items: [
+                                { id: "credit_limit", label: "Credit Limit" },
+                                { id: "monthly_spend", label: "Monthly Spend" },
+                                { id: "average_utilization", label: "Utilization Ratio" },
+                                { id: "payment_delay_days", label: "Payment Delays" }
+                              ]
+                            },
+                            {
+                              name: "Loan Details",
+                              items: [
+                                { id: "active_loans_count", label: "Active Loans" },
+                                { id: "total_outstanding_loan", label: "Outstanding Loan" },
+                                { id: "average_interest_rate", label: "Interest Rate" },
+                                { id: "monthly_loan_emi", label: "Monthly EMI" }
+                              ]
+                            },
+                            {
+                              name: "Investment Profiles",
+                              items: [
+                                { id: "mutual_fund_holdings", label: "Mutual Funds" },
+                                { id: "equity_portfolio_value", label: "Equity Value" },
+                                { id: "fixed_deposit_balance", label: "FD Balance" },
+                                { id: "monthly_sip_amount", label: "SIP Amount" }
+                              ]
+                            }
+                          ];
+
+                          const predefinedIds = categories.flatMap(c => c.items.map(i => i.id));
+                          const customFeatures = pipelineSelectedFeatures.filter(f => !predefinedIds.includes(f));
+
+                          const displayCategories = [...categories];
+                          if (customFeatures.length > 0) {
+                            displayCategories.push({
+                              name: "Custom / Engineered Features",
+                              items: customFeatures.map(f => ({ id: f, label: f }))
+                            });
+                          }
+
+                          return displayCategories.map((grp) => {
+                            const selectedInGrp = grp.items.filter(item => pipelineSelectedFeatures.includes(item.id));
+                            return (
+                              <div key={grp.name} className={`p-3 rounded-lg border ${isDarkMode ? 'bg-gray-900/40 border-gray-800/80' : 'bg-gray-50 border-gray-200'} space-y-2`}>
+                                <h5 className="text-[10px] uppercase font-bold text-gray-450 tracking-wider">{grp.name}</h5>
+                                {selectedInGrp.length > 0 ? (
+                                  <div className="space-y-1.5">
+                                    {selectedInGrp.map(item => (
+                                      <div key={item.id} className="flex items-center gap-2 text-xs font-semibold text-green-500 dark:text-green-400 bg-green-950/10 dark:bg-green-950/20 border border-green-900/30 px-2.5 py-1 rounded">
+                                        <svg className="w-3.5 h-3.5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
+                                        </svg>
+                                        <span className={isDarkMode ? 'text-white' : 'text-gray-850'}>{item.label}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="text-[10px] text-gray-555 italic text-center py-2">No features selected</div>
+                                )}
+                              </div>
+                            );
+                          });
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
+          {/* Navigation Buttons */}
           <div className="flex justify-between items-center">
             <button
               onClick={() => setPipelineStep(1)}
@@ -379,7 +713,10 @@ export default function MLPipelineStudio() {
                 setPipelineStep(3);
                 fetchFeatureReductionPreview();
               }}
-              disabled={pipelineSelectedFeatures.length === 0}
+              disabled={
+                pipelineSelectedFeatures.length === 0 ||
+                (featureSelectionMode === 'pyspark' && !pysparkProcessed)
+              }
               className="px-5 py-2.5 bg-axis-burgundy hover:bg-axis-burgundy-hover text-white text-xs font-bold uppercase tracking-wider rounded-lg disabled:opacity-40 cursor-pointer"
             >
               Reduce Features & Impute &rarr;
