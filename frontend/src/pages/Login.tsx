@@ -19,7 +19,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const navigate = useNavigate();
-  const userRef = useRef(null);
+  const userRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     (!!userRef && !!userRef.current) && userRef.current.focus();
