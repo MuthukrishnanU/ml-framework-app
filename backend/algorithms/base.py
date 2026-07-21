@@ -75,12 +75,17 @@ class UnifiedModelWrapper(abc.ABC):
         except Exception:
             ks = 0.0
             
+        def clean_val(val, default):
+            if val is None or pd.isnull(val) or np.isnan(val) or np.isinf(val):
+                return default
+            return round(float(val), 4)
+
         return {
-            "roc_auc": round(float(roc_auc), 4),
-            "pr_auc": round(float(pr_auc), 4),
-            "f1_score": round(float(f1), 4),
-            "log_loss": round(float(loss), 4),
-            "ks_statistic": round(float(ks), 4)
+            "roc_auc": clean_val(roc_auc, 0.5),
+            "pr_auc": clean_val(pr_auc, 0.5),
+            "f1_score": clean_val(f1, 0.0),
+            "log_loss": clean_val(loss, 0.693),
+            "ks_statistic": clean_val(ks, 0.0)
         }
 
     @abc.abstractmethod
@@ -119,4 +124,6 @@ class UnifiedModelWrapper(abc.ABC):
             return 1.0
             
         impact_ratio = unpriv_selection_rate / priv_selection_rate
+        if np.isnan(impact_ratio) or np.isinf(impact_ratio):
+            return 1.0
         return round(float(impact_ratio), 4)

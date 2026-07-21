@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 from sklearn.neural_network import MLPClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
 from backend.algorithms.base import UnifiedModelWrapper
 
 FEATURES = [
@@ -12,11 +14,14 @@ FEATURES = [
 ]
 
 class NeuralNetworkWrapper(UnifiedModelWrapper):
-    """Wrapper for Multi-Layer Perceptron Neural Network classification."""
+    """Wrapper for Multi-Layer Perceptron Neural Network classification using feature scaling."""
     
     def __init__(self, model_id: str, features: list = None):
         super().__init__(model_id, "Neural Network", features=features or FEATURES)
-        self.model = MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=500, random_state=42)
+        self.model = make_pipeline(
+            StandardScaler(),
+            MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=500, random_state=42)
+        )
         
     def train(self, df: pd.DataFrame, target_col: str):
         X = df[self.features].fillna(0).to_numpy()
@@ -32,21 +37,23 @@ class NeuralNetworkWrapper(UnifiedModelWrapper):
     def predict(self, df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
         X = df[self.features].fillna(0).to_numpy()
         probs = self.model.predict_proba(X)[:, 1]
+        probs = np.nan_to_num(probs, nan=0.5, posinf=1.0, neginf=0.0)
         labels = (probs >= 0.55).astype(int)
         return probs, labels
         
     def explain(self, df: pd.DataFrame) -> np.ndarray:
-        # Approximate feature contribution for MLP by summing the absolute weights of the first layer
         X = df[self.features].fillna(0).to_numpy()
+        scaler = self.model.named_steps["standardscaler"]
+        mlp = self.model.named_steps["mlpclassifier"]
         
-        # Mean weight magnitude per input feature from the first layer connections
-        weights = np.mean(np.abs(self.model.coefs_[0]), axis=1)
-        impact = X * weights
+        X_scaled = scaler.transform(X)
+        weights = np.mean(np.abs(mlp.coefs_[0]), axis=1)
+        impact = X_scaled * weights
         
         explanations = []
         for i in range(len(X)):
             row_impact = impact[i]
-            sorted_indices = np.argsort(row_impact)[::-1]
+            sorted_indices = np.argsort(np.abs(row_impact))[::-1]
             explanations.append([row_impact[sorted_indices[0]], row_impact[sorted_indices[1]], row_impact[sorted_indices[2]]])
             
         return np.array(explanations)

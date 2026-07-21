@@ -3,12 +3,14 @@ import { useAppContext, API_BASE_URL } from '../context/AppContext';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
 
 export default function MLPipelineStudio() {
-  const { isDarkMode, apiFetch } = useAppContext();
+  const { isDarkMode, apiFetch, fetchDashboardData } = useAppContext();
 
   // Local ML Pipeline Studio states
   const [pipelineStep, setPipelineStep] = useState<number>(1);
   const [pipelineCampaign, setPipelineCampaign] = useState<string>('credit_card');
   const [pipelineAlgorithms, setPipelineAlgorithms] = useState<string[]>(['logistic_regression', 'xgboost']);
+
+  // Base pull filters
   const [pipelineBaseFilters, setPipelineBaseFilters] = useState({
     age_min: 18,
     age_max: 85,
@@ -26,6 +28,8 @@ export default function MLPipelineStudio() {
   const [submitDisabled, setSubmitDisabled] = useState<boolean>(false);
   const [basePullLoading, setBasePullLoading] = useState<boolean>(false);
   const [prevStep, setPrevStep] = useState<number>(1);
+
+  // Feature selection modes
   const [featureSelectionMode, setFeatureSelectionMode] = useState<'app' | 'pyspark'>('app');
   const [pysparkTemplate, setPysparkTemplate] = useState<string>(`# PySpark Feature Selection Template
 from pyspark.sql import SparkSession
@@ -65,7 +69,22 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
     "mutual_fund_holdings", "equity_portfolio_value", "fixed_deposit_balance",
     "monthly_sip_amount"
   ]);
+
+  // Event Tagging state
+  const [eventTagging, setEventTagging] = useState({
+    auto_cure_enabled: false,
+    auto_cure_max_dpd: 0,
+    roll_forward_enabled: false,
+    roll_forward_min_dpd: 30,
+    money_collected_enabled: false,
+    money_collected_min_amount: 1000
+  });
+
+  // Feature Reduction states
   const [pipelineImputations, setPipelineImputations] = useState<Record<string, string>>({});
+  const [pipelineClusters, setPipelineClusters] = useState<{ cluster_id: number, features: string[], representative: string }[]>([]);
+
+  // Training & Validation states
   const [pipelineHyperparams, setPipelineHyperparams] = useState<Record<string, Record<string, any>>>({
     logistic_regression: { C: 1.0, max_iter: 1000 },
     random_forest: { n_estimators: 100, max_depth: 8 },
@@ -81,13 +100,21 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
   const [pipelineMissingStats, setPipelineMissingStats] = useState<Record<string, any>>({});
   const [pipelineCorrMatrix, setPipelineCorrMatrix] = useState<{ columns: string[], matrix: number[][] }>({ columns: [], matrix: [] });
   const [pipelineLoading, setPipelineLoading] = useState<boolean>(false);
+  const [pipelineErrorMsg, setPipelineErrorMsg] = useState<string>('');
+
+  // Approval modal states
+  const [showApprovalModal, setShowApprovalModal] = useState<boolean>(false);
+  const [customModelId, setCustomModelId] = useState<string>('');
+  const [approvalNotes, setApprovalNotes] = useState<string>('');
+  const [approvalRole, setApprovalRole] = useState<string>('ds_lead');
+  const [approvalLoading, setApprovalLoading] = useState<boolean>(false);
+  const [approvalSuccess, setApprovalSuccess] = useState<string>('');
 
   // Helper to parse features from PySpark template
   const parseFeaturesFromPySpark = (code: string): string[] => {
-    // 1. Try to find list assignments (e.g. selected_columns = [...], selected_features = [...], columns = [...], features = [...])
     const listRegex = /(selected_columns|selected_features|columns|features)\s*=\s*\[([\s\S]*?)\]/gi;
     const match = listRegex.exec(code);
-    
+
     if (match) {
       const listContent = match[2];
       const stringRegex = /['"]([a-zA-Z0-9_-]+)['"]/g;
@@ -100,8 +127,7 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
         return Array.from(found);
       }
     }
-    
-    // 2. Fallback: Scan the entire code for any quoted strings, ignoring common keywords/imports
+
     const stringRegex = /['"]([a-zA-Z0-9_-]+)['"]/g;
     const found = new Set<string>();
     let strMatch;
@@ -172,7 +198,7 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
     setPrevStep(pipelineStep);
   }, [pipelineStep, prevStep]);
 
-  // Fetch Feature Reduction stats and matrix
+  // Fetch Feature Reduction stats, correlation matrix, and clusters
   const fetchFeatureReductionPreview = async () => {
     setPipelineLoading(true);
     try {
@@ -188,6 +214,7 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
         const data = await res.json();
         setPipelineMissingStats(data.missing_stats || {});
         setPipelineCorrMatrix(data.correlation_matrix || { columns: [], matrix: [] });
+        setPipelineClusters(data.feature_clusters || []);
       }
     } catch (e) {
       console.error("Failed to load feature reduction preview", e);
@@ -199,6 +226,7 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
   // Launch training pipeline
   const handleLaunchPipeline = async () => {
     setPipelineLoading(true);
+    setPipelineErrorMsg('');
     try {
       const res = await apiFetch(`${API_BASE_URL}/api/ml/train_custom_stepper`, {
         method: 'POST',
@@ -208,6 +236,7 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
           algorithms: pipelineAlgorithms,
           base_pull: pipelineBaseFilters,
           selected_features: pipelineSelectedFeatures,
+          event_tagging: eventTagging,
           imputations: pipelineImputations,
           hyperparameters: pipelineHyperparams,
           split_ratio: pipelineSplitRatio
@@ -225,12 +254,60 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
             setPipelineActiveModelId(data.scoreboard[0].model_id);
           }
         }
-        setPipelineStep(5);
+        setPipelineStep(6);
+      } else {
+        const errData = await res.json();
+        setPipelineErrorMsg(errData.detail || 'Training pipeline failed. Please check parameters.');
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Custom stepper pipeline training failed", e);
+      setPipelineErrorMsg(e.message || 'Cannot connect to backend server.');
     } finally {
       setPipelineLoading(false);
+    }
+  };
+
+  // Submit model approval for production monitoring
+  const handleApproveModelForMonitoring = async () => {
+    if (!pipelineActiveModelId) return;
+    const modelIdToApprove = customModelId.trim() || pipelineActiveModelId;
+    setApprovalLoading(true);
+    try {
+      const activeScorecard = pipelineScoreboard.find(m => m.model_id === pipelineActiveModelId) || {};
+      const activeCurves = pipelineCurves[pipelineActiveModelId] || {};
+
+      const res = await apiFetch(`${API_BASE_URL}/api/governance/approve_studio_model`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model_id: modelIdToApprove,
+          algorithm_type: activeScorecard.algorithm_type || 'Custom Model',
+          approved_by: approvalRole,
+          notes: approvalNotes || 'Approved from ML Pipeline Studio UAT Validation.',
+          baselines: {
+            auc: activeScorecard.auc || 0.80,
+            pr_auc: 0.75,
+            ks: activeCurves.ks || 0.50,
+            fairness_adverse_impact_ratio: activeScorecard.fairness_adverse_impact_ratio || 0.95,
+            latency_ms: activeScorecard.latency_ms || 15.0
+          }
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setApprovalSuccess(data.message || 'Model approved successfully!');
+        if (fetchDashboardData) {
+          await fetchDashboardData();
+        }
+        setTimeout(() => {
+          setShowApprovalModal(false);
+          setApprovalSuccess('');
+        }, 1500);
+      }
+    } catch (e) {
+      console.error("Failed to approve model for monitoring", e);
+    } finally {
+      setApprovalLoading(false);
     }
   };
 
@@ -239,7 +316,7 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-gray-800 pb-4">
         <div>
           <h2 className={`text-xl font-bold tracking-tight ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'}`}>ML Pipeline Studio</h2>
-          <p className="text-xs text-gray-500 font-medium">Step-by-step model configuration, cohort extraction, feature processing, and validation pipeline.</p>
+          <p className="text-xs text-gray-500 font-medium">Step-by-step model configuration, cohort extraction, event tagging, feature processing, and validation pipeline.</p>
         </div>
         {pipelineLoading && (
           <div className="flex items-center gap-2 text-xs font-bold text-axis-burgundy dark:text-red-400 animate-pulse bg-red-100 dark:bg-axis-burgundy/10 px-3 py-1.5 rounded-lg">
@@ -249,14 +326,15 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
         )}
       </div>
 
-      {/* Stepper Navigation bar */}
-      <div className="grid grid-cols-5 gap-2 text-center text-xs font-bold uppercase tracking-wider">
+      {/* Stepper Navigation bar (6 Steps) */}
+      <div className="grid grid-cols-6 gap-2 text-center text-xs font-bold uppercase tracking-wider">
         {[
           { step: 1, label: "1. Base Pull" },
           { step: 2, label: "2. Feature Selection" },
-          { step: 3, label: "3. Feature Reduction" },
-          { step: 4, label: "4. Model Training" },
-          { step: 5, label: "5. Model Validation" }
+          { step: 3, label: "3. Event Tagging" },
+          { step: 4, label: "4. Feature Reduction" },
+          { step: 5, label: "5. Model Training" },
+          { step: 6, label: "6. Model Validation" }
         ].map((s) => {
           const isActive = pipelineStep === s.step;
           const isCompleted = pipelineStep > s.step;
@@ -266,10 +344,10 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
               onClick={() => {
                 if (s.step < pipelineStep || pipelineScoreboard.length > 0) {
                   setPipelineStep(s.step);
-                  if (s.step === 3) fetchFeatureReductionPreview();
+                  if (s.step === 4) fetchFeatureReductionPreview();
                 }
               }}
-              className={`py-3 px-1 rounded-lg border transition-all cursor-pointer select-none ${isActive ? 'bg-axis-burgundy text-white border-axis-burgundy' : isCompleted ? 'bg-green-950/20 text-green-600 border-green-900/40' : 'bg-gray-950/20 text-gray-500 border-gray-850'}`}
+              className={`py-3 px-1 rounded-lg border transition-all cursor-pointer select-none text-[11px] ${isActive ? 'bg-axis-burgundy text-white border-axis-burgundy' : isCompleted ? 'bg-green-950/20 text-green-600 border-green-900/40' : 'bg-gray-950/20 text-gray-500 border-gray-850'}`}
             >
               {s.label}
             </div>
@@ -421,13 +499,12 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
       {pipelineStep === 2 && (
         <div className="space-y-6">
           <div className={`p-5 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} space-y-6`}>
-            {/* Header with Mode Switcher */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-gray-805/40">
               <div className="flex flex-col gap-1">
                 <h3 className={`font-bold text-sm ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'}`}>Feature Store Variable Selector</h3>
                 <span className="text-[10px] text-gray-500 font-medium">Choose between configuring features visually or using a PySpark data pipeline code template.</span>
               </div>
-              
+
               <div className="flex bg-gray-900/60 border border-gray-800/80 p-0.5 rounded-lg text-[10px] font-bold uppercase tracking-wider select-none">
                 <button
                   onClick={() => setFeatureSelectionMode('app')}
@@ -444,7 +521,6 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
               </div>
             </div>
 
-            {/* Mode 1: App based Selection (Checkboxes) */}
             {featureSelectionMode === 'app' && (
               <div className="space-y-4">
                 <div className="flex justify-end gap-2 text-xs">
@@ -528,7 +604,7 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
                               />
                               <div className="text-[10px]">
                                 <div className={`font-semibold ${isDarkMode ? 'text-white' : 'text-black'}`}>{item.label}</div>
-                                <div className="flex gap-2 text-[8px] mt-0.5 text-gray-555 font-mono">
+                                <div className="flex gap-2 text-[8px] mt-0.5 text-gray-500 font-mono">
                                   <span>{item.type}</span>
                                   <span className={item.sens === 'Critical' ? 'text-red-400' : item.sens === 'High' ? 'text-amber-500' : 'text-gray-600'}>
                                     {item.sens}
@@ -545,10 +621,8 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
               </div>
             )}
 
-            {/* Mode 2: PySpark Template based Selection (Split View) */}
             {featureSelectionMode === 'pyspark' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Left Side: Code Editor & Upload */}
                 <div className="space-y-4 pr-0 lg:pr-6 border-r-0 lg:border-r border-gray-800/40">
                   <div className="flex items-center justify-between gap-4">
                     <label className="text-xs font-semibold text-gray-450">PySpark Template Code</label>
@@ -595,7 +669,6 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
                   </button>
                 </div>
 
-                {/* Right Side: Parsed Features Preview */}
                 <div className="flex flex-col justify-between space-y-4">
                   {!pysparkProcessed ? (
                     <div className="flex flex-col items-center justify-center h-full min-h-[300px] p-8 text-center bg-gray-900/10 border border-dashed border-gray-800 rounded-xl space-y-3">
@@ -617,7 +690,7 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
                           {pipelineSelectedFeatures.length} Features Extracted
                         </span>
                       </div>
-                      
+
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         {(() => {
                           const categories = [
@@ -700,7 +773,6 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
             )}
           </div>
 
-          {/* Navigation Buttons */}
           <div className="flex justify-between items-center">
             <button
               onClick={() => setPipelineStep(1)}
@@ -709,15 +781,136 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
               &larr; Back
             </button>
             <button
-              onClick={() => {
-                setPipelineStep(3);
-                fetchFeatureReductionPreview();
-              }}
+              onClick={() => setPipelineStep(3)}
               disabled={
                 pipelineSelectedFeatures.length === 0 ||
                 (featureSelectionMode === 'pyspark' && !pysparkProcessed)
               }
               className="px-5 py-2.5 bg-axis-burgundy hover:bg-axis-burgundy-hover text-white text-xs font-bold uppercase tracking-wider rounded-lg disabled:opacity-40 cursor-pointer"
+            >
+              Configure Event Tagging &rarr;
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 3: Event Tagging (NEW) */}
+      {pipelineStep === 3 && (
+        <div className="space-y-6">
+          <div className={`p-5 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} space-y-6`}>
+            <div>
+              <h3 className={`font-bold text-sm ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'}`}>Event Tagging & Behavioral Target Rules</h3>
+              <p className="text-xs text-gray-500 font-medium mt-1">Configure automated event markers for self-curing accounts, delinquency roll-forward transitions, and collections recovery targets.</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Card 1: Auto Cure */}
+              <div className={`p-4 rounded-xl border space-y-4 ${eventTagging.auto_cure_enabled ? 'bg-green-950/20 border-green-800/50' : 'bg-gray-900/30 border-gray-800'}`}>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={eventTagging.auto_cure_enabled}
+                    onChange={(e) => setEventTagging(prev => ({ ...prev, auto_cure_enabled: e.target.checked }))}
+                    className="rounded border-gray-700 text-axis-burgundy focus:ring-axis-burgundy"
+                  />
+                  <div>
+                    <span className={`font-bold text-xs ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Auto Cure Tagging</span>
+                    <span className="block text-[10px] text-gray-400">Self-cured delinquent accounts</span>
+                  </div>
+                </label>
+
+                {eventTagging.auto_cure_enabled && (
+                  <div className="space-y-2 pt-2 border-t border-gray-800/60 text-xs">
+                    <label className="text-[10px] font-semibold text-gray-400 block">Max Payment Delay (Days)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="30"
+                      value={eventTagging.auto_cure_max_dpd}
+                      onChange={(e) => setEventTagging(prev => ({ ...prev, auto_cure_max_dpd: parseInt(e.target.value || '0', 10) }))}
+                      className={`w-full px-3 py-1.5 text-xs rounded border focus:outline-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
+                    />
+                    <p className="text-[9px] text-gray-500">Accounts &le; {eventTagging.auto_cure_max_dpd} DPD are tagged as cured non-events (Y=0).</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Card 2: Roll Forward */}
+              <div className={`p-4 rounded-xl border space-y-4 ${eventTagging.roll_forward_enabled ? 'bg-amber-950/20 border-amber-800/50' : 'bg-gray-900/30 border-gray-800'}`}>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={eventTagging.roll_forward_enabled}
+                    onChange={(e) => setEventTagging(prev => ({ ...prev, roll_forward_enabled: e.target.checked }))}
+                    className="rounded border-gray-700 text-axis-burgundy focus:ring-axis-burgundy"
+                  />
+                  <div>
+                    <span className={`font-bold text-xs ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Roll Forward Tagging</span>
+                    <span className="block text-[10px] text-gray-400">DPD bucket transition events</span>
+                  </div>
+                </label>
+
+                {eventTagging.roll_forward_enabled && (
+                  <div className="space-y-2 pt-2 border-t border-gray-800/60 text-xs">
+                    <label className="text-[10px] font-semibold text-gray-400 block">Min Roll-Forward DPD</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="180"
+                      value={eventTagging.roll_forward_min_dpd}
+                      onChange={(e) => setEventTagging(prev => ({ ...prev, roll_forward_min_dpd: parseInt(e.target.value || '30', 10) }))}
+                      className={`w-full px-3 py-1.5 text-xs rounded border focus:outline-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
+                    />
+                    <p className="text-[9px] text-gray-500">Accounts &ge; {eventTagging.roll_forward_min_dpd} DPD are tagged as roll-forward events (Y=1).</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Card 3: Money Collected */}
+              <div className={`p-4 rounded-xl border space-y-4 ${eventTagging.money_collected_enabled ? 'bg-blue-950/20 border-blue-800/50' : 'bg-gray-900/30 border-gray-800'}`}>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={eventTagging.money_collected_enabled}
+                    onChange={(e) => setEventTagging(prev => ({ ...prev, money_collected_enabled: e.target.checked }))}
+                    className="rounded border-gray-700 text-axis-burgundy focus:ring-axis-burgundy"
+                  />
+                  <div>
+                    <span className={`font-bold text-xs ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Money Collected Tagging</span>
+                    <span className="block text-[10px] text-gray-400">Recovery & collections target</span>
+                  </div>
+                </label>
+
+                {eventTagging.money_collected_enabled && (
+                  <div className="space-y-2 pt-2 border-t border-gray-800/60 text-xs">
+                    <label className="text-[10px] font-semibold text-gray-400 block">Min Recovery Amount (₹)</label>
+                    <input
+                      type="number"
+                      step="500"
+                      value={eventTagging.money_collected_min_amount}
+                      onChange={(e) => setEventTagging(prev => ({ ...prev, money_collected_min_amount: parseFloat(e.target.value || '1000') }))}
+                      className={`w-full px-3 py-1.5 text-xs rounded border focus:outline-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
+                    />
+                    <p className="text-[9px] text-gray-500">Accounts with payment &ge; ₹{eventTagging.money_collected_min_amount.toLocaleString()} are tagged as recovery events (Y=1).</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-between items-center">
+            <button
+              onClick={() => setPipelineStep(2)}
+              className={`px-4 py-2 text-xs font-bold border border-gray-800 hover:bg-gray-850 rounded-lg cursor-pointer ${isDarkMode ? 'text-white' : 'text-gray-900'}`}
+            >
+              &larr; Back
+            </button>
+            <button
+              onClick={() => {
+                setPipelineStep(4);
+                fetchFeatureReductionPreview();
+              }}
+              className="px-5 py-2.5 bg-axis-burgundy hover:bg-axis-burgundy-hover text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-md cursor-pointer"
             >
               Reduce Features & Impute &rarr;
             </button>
@@ -725,13 +918,13 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
         </div>
       )}
 
-      {/* Step 3: Feature Reduction */}
-      {pipelineStep === 3 && (
+      {/* Step 4: Feature Reduction & Clustering */}
+      {pipelineStep === 4 && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Imputations Strategy Config */}
+            {/* Left Side: Imputations Strategy Config */}
             <div className="lg:col-span-7 space-y-4">
-              <h3 className={`font-bold text-sm  ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'}`}>Imputations & Treatment Options</h3>
+              <h3 className={`font-bold text-sm ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'}`}>Imputations & Treatment Options</h3>
               <div className="overflow-x-auto border border-gray-850 rounded-xl">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
@@ -772,382 +965,525 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
               </div>
             </div>
 
-            {/* Correlation Heatmap Grid */}
-            <div className="lg:col-span-5 space-y-4">
-              <h3 className={`font-bold text-sm  ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'}`}>Collinearity Heatmap Matrix</h3>
-              <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} space-y-2`}>
-                <p className="text-[10px] text-gray-550">Visual mapping of Pearson coefficients. Highlighted red cells ($r \ge 0.85$) represent high collinearity.</p>
+            {/* Right Side: Correlation Matrix & Clustering */}
+            <div className="lg:col-span-5 space-y-6">
+              {/* Correlation Heatmap Grid */}
+              <div className="space-y-3">
+                <h3 className={`font-bold text-sm ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'}`}>Collinearity Heatmap Matrix</h3>
+                <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} space-y-2`}>
+                  <p className="text-[10px] text-gray-550">Visual mapping of Pearson coefficients. Highlighted red cells ($r \ge 0.85$) represent high collinearity.</p>
 
-                {pipelineCorrMatrix.columns && pipelineCorrMatrix.columns.length > 0 ? (
-                  <div className="space-y-1">
-                    <div className="grid font-mono font-bold text-[8px] text-gray-550" style={{ gridTemplateColumns: `repeat(${pipelineCorrMatrix.columns.length}, minmax(0, 1fr))` }}>
-                      {pipelineCorrMatrix.columns.map((c, idx) => (
-                        <span key={c} className="text-center truncate" title={(idx + 1) + "-" + c}>{c.substring(0, 3)}</span>
-                      ))}
-                    </div>
+                  {pipelineCorrMatrix.columns && pipelineCorrMatrix.columns.length > 0 ? (
                     <div className="space-y-1">
-                      {pipelineCorrMatrix.matrix.map((row, r_idx) => (
-                        <div key={r_idx} className="grid gap-1" style={{ gridTemplateColumns: `repeat(${pipelineCorrMatrix.columns.length}, minmax(0, 1fr))` }}>
-                          {row.map((val, c_idx) => {
-                            const abs_val = Math.abs(val);
-                            let cellBg = 'bg-gray-900/60';
-                            if (abs_val >= 0.85 && r_idx !== c_idx) cellBg = 'bg-red-900/70 border border-red-500/30 text-white';
-                            else if (abs_val >= 0.5 && r_idx !== c_idx) cellBg = 'bg-amber-900/40 text-amber-300';
-                            else if (r_idx === c_idx) cellBg = 'bg-gray-800 text-gray-300';
-                            return (
-                              <div
-                                key={c_idx}
-                                className={`py-1 text-center font-mono text-[8px] font-bold rounded cursor-pointer select-none ${cellBg}`}
-                                title={`${pipelineCorrMatrix.columns[r_idx]} vs ${pipelineCorrMatrix.columns[c_idx]}: ${val.toFixed(4)}`}
-                              >
-                                {val.toFixed(2)}
-                              </div>
-                            );
-                          })}
+                      <div className="grid font-mono font-bold text-[8px] text-gray-550" style={{ gridTemplateColumns: `repeat(${pipelineCorrMatrix.columns.length}, minmax(0, 1fr))` }}>
+                        {pipelineCorrMatrix.columns.map((c, idx) => (
+                          <span key={c} className="text-center truncate" title={(idx + 1) + "-" + c}>{c.substring(0, 3)}</span>
+                        ))}
+                      </div>
+                      <div className="space-y-1">
+                        {pipelineCorrMatrix.matrix.map((row, r_idx) => (
+                          <div key={r_idx} className="grid gap-1" style={{ gridTemplateColumns: `repeat(${pipelineCorrMatrix.columns.length}, minmax(0, 1fr))` }}>
+                            {row.map((val, c_idx) => {
+                              const abs_val = Math.abs(val);
+                              let cellBg = 'bg-gray-900/60';
+                              if (abs_val >= 0.85 && r_idx !== c_idx) cellBg = 'bg-red-900/70 border border-red-500/30 text-white';
+                              else if (abs_val >= 0.5 && r_idx !== c_idx) cellBg = 'bg-amber-900/40 text-amber-300';
+                              else if (r_idx === c_idx) cellBg = 'bg-gray-800 text-gray-300';
+                              return (
+                                <div
+                                  key={c_idx}
+                                  className={`py-1 text-center font-mono text-[8px] font-bold rounded cursor-pointer select-none ${cellBg}`}
+                                  title={`${pipelineCorrMatrix.columns[r_idx]} vs ${pipelineCorrMatrix.columns[c_idx]}: ${val.toFixed(4)}`}
+                                >
+                                  {val.toFixed(2)}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-555 text-center py-6">Select numeric variables in Feature Selection to render correlation matrix.</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Feature Clustering Panel (NEW) */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className={`font-bold text-sm ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'}`}>Feature Clusters & Redundancy</h3>
+                  {pipelineClusters.length > 0 && (
+                    <button
+                      onClick={() => {
+                        const reps = pipelineClusters.map(c => c.representative);
+                        setPipelineSelectedFeatures(reps);
+                      }}
+                      className="text-[10px] font-bold text-blue-400 hover:underline cursor-pointer bg-transparent border-0"
+                    >
+                      Keep Representatives Only
+                    </button>
+                  )}
+                </div>
+
+                <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} space-y-3`}>
+                  <p className="text-[10px] text-gray-550">Hierarchical clustering groups correlated features into redundancy buckets.</p>
+
+                  {pipelineClusters.length > 0 ? (
+                    <div className="space-y-2">
+                      {pipelineClusters.map((cluster) => (
+                        <div key={cluster.cluster_id} className="p-2.5 rounded-lg bg-gray-900/40 border border-gray-850 text-xs flex justify-between items-center gap-2">
+                          <div>
+                            <span className="font-bold text-gray-400 text-[10px] uppercase block">Cluster {cluster.cluster_id}</span>
+                            <span className="font-mono text-white text-[11px]">{cluster.features.join(", ")}</span>
+                          </div>
+                          <span className="bg-axis-burgundy/20 text-axis-burgundy dark:text-red-300 text-[9px] font-bold px-2 py-0.5 rounded border border-red-900/30">
+                            Rep: {cluster.representative}
+                          </span>
                         </div>
                       ))}
                     </div>
-                  </div>
-                ) : (
-                  <p className="text-xs text-gray-555 text-center py-10">Select numeric variables in Feature Selection to render correlation matrix.</p>
-                )}
+                  ) : (
+                    <p className="text-xs text-gray-555 text-center py-4">No feature clusters generated.</p>
+                  )}
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center border-t border-gray-800 pt-4">
             <button
-              onClick={() => setPipelineStep(2)}
+              onClick={() => setPipelineStep(3)}
               className={`px-4 py-2 text-xs font-bold border border-gray-800 hover:bg-gray-850 rounded-lg cursor-pointer ${isDarkMode ? 'text-white' : 'text-gray-900'}`}
             >
               &larr; Back
             </button>
             <button
-              onClick={() => setPipelineStep(4)}
+              onClick={() => setPipelineStep(5)}
               className="px-5 py-2.5 bg-axis-burgundy hover:bg-axis-burgundy-hover text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-md transition-all cursor-pointer"
             >
               Tuning & Training &rarr;
             </button>
           </div>
         </div>
-      )
-      }
+      )}
 
-      {/* Step 4: Model Training */}
-      {
-        pipelineStep === 4 && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Splits and Hyperparameters Form */}
-              <div className={`p-5 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} space-y-4 h-fit`}>
-                <h3 className={`font-bold text-sm ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'} uppercase tracking-wide`}>Simulation Configuration</h3>
+      {/* Step 5: Model Training */}
+      {pipelineStep === 5 && (
+        <div className="space-y-6">
+          {pipelineErrorMsg && (
+            <div className="p-4 rounded-xl bg-red-950/40 border border-red-800 text-red-300 text-xs font-semibold flex items-center justify-between">
+              <div>⚠️ Training Error: {pipelineErrorMsg}</div>
+              <button onClick={() => setPipelineErrorMsg('')} className="text-gray-400 hover:text-white font-bold bg-transparent border-0 cursor-pointer">✕</button>
+            </div>
+          )}
 
-                {/* Target Campaign Select */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-gray-405 block">Campaign Type (Target Label Y)</label>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Splits and Hyperparameters Form */}
+            <div className={`p-5 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} space-y-4 h-fit`}>
+              <h3 className={`font-bold text-sm ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'} uppercase tracking-wide`}>Simulation Configuration</h3>
+
+              {/* Target Campaign Select */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-gray-405 block">Campaign Type (Target Label Y)</label>
+                <select
+                  value={pipelineCampaign}
+                  onChange={(e) => setPipelineCampaign(e.target.value)}
+                  className={`w-full px-3 py-2 rounded-lg border text-xs focus:outline-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-gray-100' : 'bg-white border-gray-300 text-gray-900'}`}
+                >
+                  <option value="credit_card">Credit Card Propensity Model</option>
+                  <option value="mutual_funds">Mutual Fund Propensity Model</option>
+                  <option value="loans">Loans Propensity Model</option>
+                  <option value="defaulter">Card Payment Defaulter Model</option>
+                  <option value="investment_aggressiveness">Investment Aggressiveness Model</option>
+                  <option value="next_best_action">Next Best Action Model (Recommendation System)</option>
+                </select>
+              </div>
+
+              {/* Split Ratio Slider */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-gray-405 block">Train / Test Split Ratio</label>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="0.9"
+                  step="0.05"
+                  value={pipelineSplitRatio}
+                  onChange={(e) => setPipelineSplitRatio(parseFloat(e.target.value))}
+                  className="w-full accent-axis-burgundy"
+                />
+                <div className="flex justify-between text-[10px] font-mono text-gray-550">
+                  <span>{(pipelineSplitRatio * 100).toFixed(0)}% Training Set</span>
+                  <span>{((1.0 - pipelineSplitRatio) * 100).toFixed(0)}% Validation Set</span>
+                </div>
+              </div>
+
+              {/* Launch Button */}
+              <button
+                onClick={handleLaunchPipeline}
+                disabled={pipelineAlgorithms.length === 0 || pipelineLoading}
+                className="w-full py-2.5 bg-axis-burgundy hover:bg-axis-burgundy-hover text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-md hover:shadow-lg transition-all disabled:opacity-40 cursor-pointer"
+              >
+                {pipelineLoading ? "Fitting Models..." : "Launch Custom Training Pipeline"}
+              </button>
+            </div>
+
+            {/* Algorithms Checklist and Hyperparameters Form */}
+            <div className="lg:col-span-2 space-y-4">
+              <h3 className={`font-bold text-sm ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'}`}>Choose Algorithms & Hyperparameters</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[
+                  {
+                    id: 'logistic_regression', name: 'Logistic Regression', desc: 'Linear classifier with regularization.', params: [
+                      { key: 'C', label: 'Regularization Strength (C)', type: 'float', def: 1.0 },
+                      { key: 'max_iter', label: 'Max Iterations', type: 'int', def: 1000 }
+                    ]
+                  },
+                  {
+                    id: 'random_forest', name: 'Random Forest', desc: 'Ensemble bagging decision trees model.', params: [
+                      { key: 'n_estimators', label: 'Number of Trees', type: 'int', def: 100 },
+                      { key: 'max_depth', label: 'Max Tree Depth', type: 'int', def: 8 }
+                    ]
+                  },
+                  {
+                    id: 'xgboost', name: 'XGBoost', desc: 'Extreme gradient boosted trees classifier.', params: [
+                      { key: 'learning_rate', label: 'Learning Rate (eta)', type: 'float', def: 0.1 },
+                      { key: 'max_depth', label: 'Max Depth', type: 'int', def: 5 },
+                      { key: 'n_estimators', label: 'N Estimators', type: 'int', def: 100 }
+                    ]
+                  },
+                  {
+                    id: 'catboost', name: 'CatBoost', desc: 'Symmetric decision tree boosting classifier.', params: [
+                      { key: 'depth', label: 'Tree Depth', type: 'int', def: 6 },
+                      { key: 'iterations', label: 'Iterations', type: 'int', def: 100 }
+                    ]
+                  },
+                  {
+                    id: 'pytorch_mlp', name: 'PyTorch MLP Neural Net', desc: 'Multi-layer perceptron neural network.', params: [
+                      { key: 'max_iter', label: 'Max Epochs/Iterations', type: 'int', def: 500 }
+                    ]
+                  },
+                  { id: 'linear_regression', name: 'Linear Regression Classifier', desc: 'Standard Ordinary Least Squares regression model.', params: [] }
+                ].map((alg) => {
+                  const isChecked = pipelineAlgorithms.includes(alg.id);
+                  return (
+                    <div key={alg.id} className={`p-4 rounded-xl border transition-all ${isChecked ? 'bg-axis-burgundy/5 border-axis-burgundy/40' : 'bg-gray-900/20 border-gray-850'}`}>
+                      <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => {
+                            if (isChecked) {
+                              setPipelineAlgorithms(prev => prev.filter(x => x !== alg.id));
+                            } else {
+                              setPipelineAlgorithms(prev => [...prev, alg.id]);
+                            }
+                          }}
+                          className="rounded border-gray-700 text-axis-burgundy focus:ring-axis-burgundy mt-1"
+                        />
+                        <div>
+                          <div className={`text-xs font-bold ${isDarkMode ? 'text-white' : 'text-black'}`}>{alg.name}</div>
+                          <div className="text-[10px] text-gray-500 mt-0.5 leading-relaxed">{alg.desc}</div>
+                        </div>
+                      </label>
+
+                      {isChecked && alg.params.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-gray-850/40 space-y-2 text-[10px]">
+                          {alg.params.map((p) => (
+                            <div key={p.key} className="flex items-center justify-between gap-4">
+                              <span className="text-gray-450">{p.label}:</span>
+                              <input
+                                type="number"
+                                step={p.type === 'float' ? '0.05' : '1'}
+                                value={pipelineHyperparams[alg.id]?.[p.key] ?? p.def}
+                                onChange={(e) => {
+                                  const val = p.type === 'float' ? parseFloat(e.target.value || '0.0') : parseInt(e.target.value || '0', 10);
+                                  setPipelineHyperparams(prev => ({
+                                    ...prev,
+                                    [alg.id]: {
+                                      ...prev[alg.id],
+                                      [p.key]: val
+                                    }
+                                  }));
+                                }}
+                                className={`w-20 px-2 py-0.5 rounded border text-right focus:outline-none ${isDarkMode ? 'bg-gray-950 border-gray-800 text-white' : 'bg-white border-gray-305'}`}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-between items-center border-t border-gray-800 pt-4">
+            <button
+              onClick={() => setPipelineStep(4)}
+              className={`px-4 py-2 text-xs font-bold border border-gray-800 hover:bg-gray-850 rounded-lg cursor-pointer ${isDarkMode ? 'text-white' : 'text-black'}`}
+            >
+              &larr; Back
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 6: Model Validation & Production Approval */}
+      {pipelineStep === 6 && (
+        <div className="space-y-6">
+          {/* Validation Scoreboard Summary */}
+          <div className="space-y-3">
+            <div className="flex justify-between items-center">
+              <h3 className="font-bold text-xs uppercase tracking-wider text-gray-455">Pipeline Training Results</h3>
+              {pipelineActiveModelId && (
+                <button
+                  onClick={() => {
+                    setCustomModelId(pipelineActiveModelId);
+                    setShowApprovalModal(true);
+                  }}
+                  className="px-3.5 py-1.5 bg-green-700 hover:bg-green-600 text-white text-xs font-bold rounded-lg shadow transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
+                  </svg>
+                  Approve for Production Monitoring
+                </button>
+              )}
+            </div>
+
+            <div className="overflow-x-auto border border-gray-850 rounded-xl">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-gray-850 bg-gray-950/40 text-gray-455 uppercase tracking-wider font-semibold">
+                    <th className="p-3">Model ID</th>
+                    <th className="p-3">Algorithm</th>
+                    <th className="p-3">Status</th>
+                    <th className="p-3">Validation ROC-AUC</th>
+                    <th className="p-3">Adverse Impact Ratio</th>
+                    <th className="p-3">Training Latency</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-850 text-gray-300">
+                  {pipelineScoreboard.map((row, index) => {
+                    const isSelected = pipelineActiveModelId === row.model_id;
+                    const isFailed = row.status.startsWith('Failed');
+                    return (
+                      <tr
+                        key={index}
+                        onClick={() => { if (!isFailed) setPipelineActiveModelId(row.model_id); }}
+                        className={`cursor-pointer transition-colors ${isSelected ? 'bg-axis-burgundy/10 hover:bg-axis-burgundy/15 font-semibold text-white' : 'hover:bg-gray-900/10'}`}
+                      >
+                        <td className="p-3 font-mono font-bold text-axis-burgundy dark:text-red-400">{row.model_id}</td>
+                        <td className={`p-3 ${isDarkMode ? 'text-white' : 'text-black'}`}>{row.algorithm_type}</td>
+                        <td className="p-3">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${isFailed ? 'bg-red-950 text-red-400 border border-red-900' : 'bg-green-950 text-green-300 border border-green-900'}`}>
+                            {row.status}
+                          </span>
+                        </td>
+                        <td className="p-3 font-bold text-green-500">{isFailed ? '-' : row.auc.toFixed(4)}</td>
+                        <td className="p-3 font-medium text-blue-400">{isFailed ? '-' : row.fairness_adverse_impact_ratio.toFixed(4)}</td>
+                        <td className={`p-3 font-medium ${isDarkMode ? 'text-white' : 'text-black'}`}>{row.latency_ms.toFixed(2)} ms</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Active Validation curves */}
+          {pipelineActiveModelId && pipelineCurves[pipelineActiveModelId] && (
+            <div className="space-y-6">
+              {/* Metric cards grid */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} flex flex-col justify-between`}>
+                  <span className="text-[10px] uppercase font-bold text-gray-500 tracking-wider">Validation AUC</span>
+                  <span className="text-2xl font-black mt-2 text-green-500">
+                    {pipelineScoreboard.find(m => m.model_id === pipelineActiveModelId)?.auc.toFixed(4) || '0.5000'}
+                  </span>
+                </div>
+                <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} flex flex-col justify-between`}>
+                  <span className="text-[10px] uppercase font-bold text-gray-500 tracking-wider">Calculated Gini</span>
+                  <span className="text-2xl font-black mt-2 text-axis-burgundy dark:text-red-400">
+                    {pipelineCurves[pipelineActiveModelId].gini.toFixed(4)}
+                  </span>
+                </div>
+                <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} flex flex-col justify-between`}>
+                  <span className="text-[10px] uppercase font-bold text-gray-500 tracking-wider">KS Statistic</span>
+                  <span className="text-2xl font-black mt-2 text-blue-500">
+                    {pipelineCurves[pipelineActiveModelId].ks.toFixed(4)}
+                  </span>
+                </div>
+                <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} flex flex-col justify-between`}>
+                  <span className="text-[10px] uppercase font-bold text-gray-500 tracking-wider">Fairness (AIR Ratio)</span>
+                  <span className="text-2xl font-black mt-2 text-amber-500">
+                    {pipelineScoreboard.find(m => m.model_id === pipelineActiveModelId)?.fairness_adverse_impact_ratio.toFixed(4) || '1.0000'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Charts display */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* ROC Curve Chart */}
+                <div className={`p-5 rounded-2xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-white border-gray-250'} shadow-sm`}>
+                  <h4 className="font-bold text-xs uppercase tracking-wider text-gray-500 mb-4">Receiver Operating Characteristic (ROC Curve)</h4>
+                  <div className="h-60">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={pipelineCurves[pipelineActiveModelId].roc_curve}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#222" />
+                        <XAxis dataKey="fpr" type="number" domain={[0, 1]} label={{ value: 'False Positive Rate (FPR)', position: 'insideBottom', offset: -5 }} stroke="#888" />
+                        <YAxis type="number" domain={[0, 1]} label={{ value: 'True Positive Rate (TPR)', angle: -90, position: 'insideLeft' }} stroke="#888" />
+                        <Tooltip contentStyle={{ backgroundColor: '#111', borderColor: '#333' }} />
+                        <Legend />
+                        <Line type="monotone" dataKey="tpr" stroke="#861F41" strokeWidth={3} name="Model ROC" />
+                        <Line type="monotone" dataKey="fpr" stroke="#555" strokeDasharray="5 5" name="Random Guess (0.50)" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* Precision-Recall Curve Chart */}
+                <div className={`p-5 rounded-2xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-white border-gray-250'} shadow-sm`}>
+                  <h4 className="font-bold text-xs uppercase tracking-wider text-gray-500 mb-4">Precision-Recall (PR Curve)</h4>
+                  <div className="h-60">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={pipelineCurves[pipelineActiveModelId].pr_curve}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#222" />
+                        <XAxis dataKey="recall" type="number" domain={[0, 1]} label={{ value: 'Recall', position: 'insideBottom', offset: -5 }} stroke="#888" />
+                        <YAxis type="number" domain={[0, 1]} label={{ value: 'Precision', angle: -90, position: 'insideLeft' }} stroke="#888" />
+                        <Tooltip contentStyle={{ backgroundColor: '#111', borderColor: '#333' }} />
+                        <Legend />
+                        <Line type="monotone" dataKey="precision" stroke="#3b82f6" strokeWidth={3} name="Model Precision" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* Risk Sloping deciles bar chart */}
+                <div className={`p-5 rounded-2xl border lg:col-span-2 ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-white border-gray-250'} shadow-sm`}>
+                  <h4 className="font-bold text-xs uppercase tracking-wider text-gray-500 mb-4">Monotonic Risk Sloping: Predicted Prob vs Actual Rates</h4>
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={pipelineCurves[pipelineActiveModelId].risk_sloping}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#222" />
+                        <XAxis dataKey="bin" stroke="#888" />
+                        <YAxis stroke="#888" />
+                        <Tooltip contentStyle={{ backgroundColor: '#111', borderColor: '#333' }} />
+                        <Legend />
+                        <Bar dataKey="predicted_rate" fill="#861F41" name="Mean Predicted Propensity" />
+                        <Bar dataKey="actual_rate" fill="#10b981" name="Actual Conversion/Default Rate" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="flex justify-between items-center border-t border-gray-800 pt-4">
+            <button
+              onClick={() => setPipelineStep(5)}
+              className={`px-4 py-2 text-xs font-bold border border-gray-800 hover:bg-gray-850 rounded-lg cursor-pointer ${isDarkMode ? 'text-white' : 'text-black'}`}
+            >
+              &larr; Adjust Hyperparameters
+            </button>
+            <button
+              onClick={() => {
+                setPipelineStep(1);
+                setPipelineScoreboard([]);
+                setPipelineCurves({});
+                setPipelineActiveModelId('');
+              }}
+              className="px-5 py-2 bg-gray-800 hover:bg-gray-700 text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-md cursor-pointer"
+            >
+              Restart Studio Pipeline &or;
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Production Approval Modal */}
+      {showApprovalModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/85 backdrop-blur-sm p-4">
+          <div className={`relative max-w-lg w-full rounded-2xl border p-6 shadow-2xl space-y-4 ${isDarkMode ? 'bg-gray-900 border-gray-800 text-white' : 'bg-white border-gray-200 text-gray-900'}`}>
+            <div className="flex items-center justify-between border-b pb-3 border-gray-750">
+              <h3 className="text-base font-bold">Approve Model for Production Monitoring</h3>
+              <button
+                onClick={() => setShowApprovalModal(false)}
+                className="text-gray-400 hover:text-white font-bold text-xs bg-gray-800 hover:bg-gray-750 px-2.5 py-1 rounded cursor-pointer border-0"
+              >
+                ✕
+              </button>
+            </div>
+
+            {approvalSuccess ? (
+              <div className="p-4 bg-green-950/40 border border-green-800 text-green-400 text-xs font-bold rounded-xl text-center">
+                ✓ {approvalSuccess}
+              </div>
+            ) : (
+              <div className="space-y-4 text-xs">
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold text-gray-400">Custom Model ID / Name</label>
+                  <input
+                    type="text"
+                    value={customModelId}
+                    onChange={(e) => setCustomModelId(e.target.value)}
+                    placeholder={pipelineActiveModelId}
+                    className={`w-full px-3 py-2 text-xs rounded-lg border font-mono font-bold focus:outline-none ${isDarkMode ? 'bg-gray-950 border-gray-700 text-red-400' : 'bg-white border-gray-300 text-axis-burgundy'}`}
+                  />
+                  <p className="text-[9px] text-gray-500">Provide a unique identifier to register this model in the Challenger pool.</p>
+                </div>
+
+                <div className="p-3 bg-gray-950/40 rounded-xl border border-gray-800 space-y-1 font-mono">
+                  <div>Algorithm Type: <span className="font-bold text-gray-200">{pipelineScoreboard.find(m => m.model_id === pipelineActiveModelId)?.algorithm_type || 'Custom Model'}</span></div>
+                  <div>Validation ROC-AUC: <span className="font-bold text-green-500">{pipelineScoreboard.find(m => m.model_id === pipelineActiveModelId)?.auc || 0.8}</span></div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold text-gray-455">Approver Role / Authority</label>
                   <select
-                    value={pipelineCampaign}
-                    onChange={(e) => setPipelineCampaign(e.target.value)}
-                    className={`w-full px-3 py-2 rounded-lg border text-xs focus:outline-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-gray-100' : 'bg-white border-gray-300 text-gray-900'}`}
+                    value={approvalRole}
+                    onChange={(e) => setApprovalRole(e.target.value)}
+                    className={`w-full px-3 py-2 text-xs rounded-lg border focus:outline-none ${isDarkMode ? 'bg-gray-950 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
                   >
-                    <option value="credit_card">Credit Card Propensity Model</option>
-                    <option value="mutual_funds">Mutual Fund Propensity Model</option>
-                    <option value="loans">Loans Propensity Model</option>
-                    <option value="defaulter">Card Payment Defaulter Model</option>
-                    <option value="investment_aggressiveness">Investment Aggressiveness Model</option>
-                    <option value="next_best_action">Next Best Action Model (Recommendation System)</option>
+                    <option value="ds_lead">Data Science Lead (ds_lead)</option>
+                    <option value="compliance_head">Head of Model Risk & Compliance</option>
+                    <option value="admin">MLOps System Admin</option>
                   </select>
                 </div>
 
-                {/* Split Ratio Slider */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-gray-405 block">Train / Test Split Ratio</label>
-                  <input
-                    type="range"
-                    min="0.5"
-                    max="0.9"
-                    step="0.05"
-                    value={pipelineSplitRatio}
-                    onChange={(e) => setPipelineSplitRatio(parseFloat(e.target.value))}
-                    className="w-full accent-axis-burgundy"
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold text-gray-455">UAT Approval Rationale & Notes</label>
+                  <textarea
+                    value={approvalNotes}
+                    onChange={(e) => setApprovalNotes(e.target.value)}
+                    placeholder="Provide justification for promoting model to Candidate Challenger pool..."
+                    className={`w-full h-24 p-3 text-xs rounded-lg border focus:outline-none ${isDarkMode ? 'bg-gray-950 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
                   />
-                  <div className="flex justify-between text-[10px] font-mono text-gray-550">
-                    <span>{(pipelineSplitRatio * 100).toFixed(0)}% Training Set</span>
-                    <span>{((1.0 - pipelineSplitRatio) * 100).toFixed(0)}% Validation Set</span>
-                  </div>
                 </div>
 
-                {/* Launch Button */}
-                <button
-                  onClick={handleLaunchPipeline}
-                  disabled={pipelineAlgorithms.length === 0 || pipelineLoading}
-                  className="w-full py-2.5 bg-axis-burgundy hover:bg-axis-burgundy-hover text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-md hover:shadow-lg transition-all disabled:opacity-40 cursor-pointer"
-                >
-                  {pipelineLoading ? "Fitting Models..." : "Launch Custom Training Pipeline"}
-                </button>
-              </div>
-
-              {/* Algorithms Checklist and Hyperparameters Form */}
-              <div className="lg:col-span-2 space-y-4">
-                <h3 className={`font-bold text-sm ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'}`}>Choose Algorithms & Hyperparameters</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {[
-                    {
-                      id: 'logistic_regression', name: 'Logistic Regression', desc: 'Linear classifier with regularization.', params: [
-                        { key: 'C', label: 'Regularization Strength (C)', type: 'float', def: 1.0 },
-                        { key: 'max_iter', label: 'Max Iterations', type: 'int', def: 1000 }
-                      ]
-                    },
-                    {
-                      id: 'random_forest', name: 'Random Forest', desc: 'Ensemble bagging decision trees model.', params: [
-                        { key: 'n_estimators', label: 'Number of Trees', type: 'int', def: 100 },
-                        { key: 'max_depth', label: 'Max Tree Depth', type: 'int', def: 8 }
-                      ]
-                    },
-                    {
-                      id: 'xgboost', name: 'XGBoost', desc: 'Extreme gradient boosted trees classifier.', params: [
-                        { key: 'learning_rate', label: 'Learning Rate (eta)', type: 'float', def: 0.1 },
-                        { key: 'max_depth', label: 'Max Depth', type: 'int', def: 5 },
-                        { key: 'n_estimators', label: 'N Estimators', type: 'int', def: 100 }
-                      ]
-                    },
-                    {
-                      id: 'catboost', name: 'CatBoost', desc: 'Symmetric decision tree boosting classifier.', params: [
-                        { key: 'depth', label: 'Tree Depth', type: 'int', def: 6 },
-                        { key: 'iterations', label: 'Iterations', type: 'int', def: 100 }
-                      ]
-                    },
-                    {
-                      id: 'pytorch_mlp', name: 'PyTorch MLP Neural Net', desc: 'Multi-layer perceptron neural network.', params: [
-                        { key: 'max_iter', label: 'Max Epochs/Iterations', type: 'int', def: 500 }
-                      ]
-                    },
-                    { id: 'linear_regression', name: 'Linear Regression Classifier', desc: 'Standard Ordinary Least Squares regression model.', params: [] }
-                  ].map((alg) => {
-                    const isChecked = pipelineAlgorithms.includes(alg.id);
-                    return (
-                      <div key={alg.id} className={`p-4 rounded-xl border transition-all ${isChecked ? 'bg-axis-burgundy/5 border-axis-burgundy/40' : 'bg-gray-900/20 border-gray-850'}`}>
-                        <label className="flex items-start gap-2.5 cursor-pointer select-none">
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={() => {
-                              if (isChecked) {
-                                setPipelineAlgorithms(prev => prev.filter(x => x !== alg.id));
-                              } else {
-                                setPipelineAlgorithms(prev => [...prev, alg.id]);
-                              }
-                            }}
-                            className="rounded border-gray-700 text-axis-burgundy focus:ring-axis-burgundy mt-1"
-                          />
-                          <div>
-                            <div className={`text-xs font-bold ${isDarkMode ? 'text-white' : 'text-black'}`}>{alg.name}</div>
-                            <div className="text-[10px] text-gray-500 mt-0.5 leading-relaxed">{alg.desc}</div>
-                          </div>
-                        </label>
-
-                        {isChecked && alg.params.length > 0 && (
-                          <div className="mt-3 pt-3 border-t border-gray-850/40 space-y-2 text-[10px]">
-                            {alg.params.map((p) => (
-                              <div key={p.key} className="flex items-center justify-between gap-4">
-                                <span className="text-gray-450">{p.label}:</span>
-                                <input
-                                  type="number"
-                                  step={p.type === 'float' ? '0.05' : '1'}
-                                  value={pipelineHyperparams[alg.id]?.[p.key] ?? p.def}
-                                  onChange={(e) => {
-                                    const val = p.type === 'float' ? parseFloat(e.target.value || '0.0') : parseInt(e.target.value || '0', 10);
-                                    setPipelineHyperparams(prev => ({
-                                      ...prev,
-                                      [alg.id]: {
-                                        ...prev[alg.id],
-                                        [p.key]: val
-                                      }
-                                    }));
-                                  }}
-                                  className={`w-20 px-2 py-0.5 rounded border text-right focus:outline-none ${isDarkMode ? 'bg-gray-950 border-gray-800 text-white' : 'bg-white border-gray-305'}`}
-                                />
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-between items-center border-t border-gray-800 pt-4">
-              <button
-                onClick={() => setPipelineStep(3)}
-                className={`px-4 py-2 text-xs font-bold border border-gray-800 hover:bg-gray-850 rounded-lg cursor-pointer ${isDarkMode ? 'text-white' : 'text-black'}`}
-              >
-                &larr; Back
-              </button>
-            </div>
-          </div>
-        )
-      }
-
-      {/* Step 5: Model Validation (UAT) */}
-      {
-        pipelineStep === 5 && (
-          <div className="space-y-6">
-            {/* Validation Scoreboard Summary */}
-            <div className="space-y-3">
-              <h3 className="font-bold text-xs uppercase tracking-wider text-gray-450">Pipeline Training Results</h3>
-              <div className="overflow-x-auto border border-gray-850 rounded-xl">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="border-b border-gray-850 bg-gray-950/40 text-gray-455 uppercase tracking-wider font-semibold">
-                      <th className="p-3">Model ID</th>
-                      <th className="p-3">Algorithm</th>
-                      <th className="p-3">Status</th>
-                      <th className="p-3">Validation ROC-AUC</th>
-                      <th className="p-3">Adverse Impact Ratio</th>
-                      <th className="p-3">Training Latency</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-850 text-gray-300">
-                    {pipelineScoreboard.map((row, index) => {
-                      const isSelected = pipelineActiveModelId === row.model_id;
-                      const isFailed = row.status.startsWith('Failed');
-                      return (
-                        <tr
-                          key={index}
-                          onClick={() => { if (!isFailed) setPipelineActiveModelId(row.model_id); }}
-                          className={`cursor-pointer transition-colors ${isSelected ? 'bg-axis-burgundy/10 hover:bg-axis-burgundy/15 font-semibold text-white' : 'hover:bg-gray-900/10'}`}
-                        >
-                          <td className="p-3 font-mono font-bold text-axis-burgundy dark:text-red-400">{row.model_id}</td>
-                          <td className={`p-3 ${isDarkMode ? 'text-white' : 'text-black'}`}>{row.algorithm_type}</td>
-                          <td className="p-3">
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${isFailed ? 'bg-red-950 text-red-400 border border-red-900' : 'bg-green-950 text-green-300 border border-green-900'}`}>
-                              {row.status}
-                            </span>
-                          </td>
-                          <td className="p-3 font-bold text-green-500">{isFailed ? '-' : row.auc.toFixed(4)}</td>
-                          <td className="p-3 font-medium text-blue-400">{isFailed ? '-' : row.fairness_adverse_impact_ratio.toFixed(4)}</td>
-                          <td className={`p-3 font-medium ${isDarkMode ? 'text-white' : 'text-black'}`}>{row.latency_ms.toFixed(2)} ms</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Active Validation curves */}
-            {pipelineActiveModelId && pipelineCurves[pipelineActiveModelId] && (
-              <div className="space-y-6">
-                {/* Metric cards grid */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} flex flex-col justify-between`}>
-                    <span className="text-[10px] uppercase font-bold text-gray-500 tracking-wider">Validation AUC</span>
-                    <span className="text-2xl font-black mt-2 text-green-500">
-                      {pipelineScoreboard.find(m => m.model_id === pipelineActiveModelId)?.auc.toFixed(4) || '0.5000'}
-                    </span>
-                  </div>
-                  <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} flex flex-col justify-between`}>
-                    <span className="text-[10px] uppercase font-bold text-gray-500 tracking-wider">Calculated Gini</span>
-                    <span className="text-2xl font-black mt-2 text-axis-burgundy dark:text-red-400">
-                      {pipelineCurves[pipelineActiveModelId].gini.toFixed(4)}
-                    </span>
-                  </div>
-                  <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} flex flex-col justify-between`}>
-                    <span className="text-[10px] uppercase font-bold text-gray-500 tracking-wider">KS Statistic</span>
-                    <span className="text-2xl font-black mt-2 text-blue-500">
-                      {pipelineCurves[pipelineActiveModelId].ks.toFixed(4)}
-                    </span>
-                  </div>
-                  <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} flex flex-col justify-between`}>
-                    <span className="text-[10px] uppercase font-bold text-gray-500 tracking-wider">Fairness (AIR Ratio)</span>
-                    <span className="text-2xl font-black mt-2 text-amber-500">
-                      {pipelineScoreboard.find(m => m.model_id === pipelineActiveModelId)?.fairness_adverse_impact_ratio.toFixed(4) || '1.0000'}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Charts display */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* ROC Curve Chart */}
-                  <div className={`p-5 rounded-2xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-white border-gray-250'} shadow-sm`}>
-                    <h4 className="font-bold text-xs uppercase tracking-wider text-gray-500 mb-4">Receiver Operating Characteristic (ROC Curve)</h4>
-                    <div className="h-60">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={pipelineCurves[pipelineActiveModelId].roc_curve}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#222" />
-                          <XAxis dataKey="fpr" type="number" domain={[0, 1]} label={{ value: 'False Positive Rate (FPR)', position: 'insideBottom', offset: -5 }} stroke="#888" />
-                          <YAxis type="number" domain={[0, 1]} label={{ value: 'True Positive Rate (TPR)', angle: -90, position: 'insideLeft' }} stroke="#888" />
-                          <Tooltip contentStyle={{ backgroundColor: '#111', borderColor: '#333' }} />
-                          <Legend />
-                          <Line type="monotone" dataKey="tpr" stroke="#861F41" strokeWidth={3} name="Model ROC" />
-                          <Line type="monotone" dataKey="fpr" stroke="#555" strokeDasharray="5 5" name="Random Guess (0.50)" />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-
-                  {/* Precision-Recall Curve Chart */}
-                  <div className={`p-5 rounded-2xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-white border-gray-250'} shadow-sm`}>
-                    <h4 className="font-bold text-xs uppercase tracking-wider text-gray-500 mb-4">Precision-Recall (PR Curve)</h4>
-                    <div className="h-60">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={pipelineCurves[pipelineActiveModelId].pr_curve}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#222" />
-                          <XAxis dataKey="recall" type="number" domain={[0, 1]} label={{ value: 'Recall', position: 'insideBottom', offset: -5 }} stroke="#888" />
-                          <YAxis type="number" domain={[0, 1]} label={{ value: 'Precision', angle: -90, position: 'insideLeft' }} stroke="#888" />
-                          <Tooltip contentStyle={{ backgroundColor: '#111', borderColor: '#333' }} />
-                          <Legend />
-                          <Line type="monotone" dataKey="precision" stroke="#3b82f6" strokeWidth={3} name="Model Precision" />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-
-                  {/* Risk Sloping deciles bar chart */}
-                  <div className={`p-5 rounded-2xl border lg:col-span-2 ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-white border-gray-250'} shadow-sm`}>
-                    <h4 className="font-bold text-xs uppercase tracking-wider text-gray-500 mb-4">Monotonic Risk Sloping: Predicted Prob vs Actual Rates</h4>
-                    <div className="h-64">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={pipelineCurves[pipelineActiveModelId].risk_sloping}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#222" />
-                          <XAxis dataKey="bin" stroke="#888" />
-                          <YAxis stroke="#888" />
-                          <Tooltip contentStyle={{ backgroundColor: '#111', borderColor: '#333' }} />
-                          <Legend />
-                          <Bar dataKey="predicted_rate" fill="#861F41" name="Mean Predicted Propensity" />
-                          <Bar dataKey="actual_rate" fill="#10b981" name="Actual Conversion/Default Rate" />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
+                <div className="flex justify-end gap-3 pt-2">
+                  <button
+                    onClick={() => setShowApprovalModal(false)}
+                    className="px-4 py-2 border border-gray-700 rounded-lg text-gray-400 hover:text-white text-xs font-bold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleApproveModelForMonitoring}
+                    disabled={approvalLoading}
+                    className="px-5 py-2 bg-green-700 hover:bg-green-600 text-white text-xs font-bold uppercase rounded-lg shadow cursor-pointer disabled:opacity-40"
+                  >
+                    {approvalLoading ? 'Promoting...' : 'Promote to Challenger Pool'}
+                  </button>
                 </div>
               </div>
             )}
-
-            <div className="flex justify-between items-center border-t border-gray-800 pt-4">
-              <button
-                onClick={() => setPipelineStep(4)}
-                className={`px-4 py-2 text-xs font-bold border border-gray-800 hover:bg-gray-850 rounded-lg cursor-pointer ${isDarkMode ? 'text-white' : 'text-black'}`}
-              >
-                &larr; Adjust Hyperparameters
-              </button>
-              <button
-                onClick={() => {
-                  setPipelineStep(1);
-                  setPipelineScoreboard([]);
-                  setPipelineCurves({});
-                  setPipelineActiveModelId('');
-                }}
-                className="px-5 py-2 bg-gray-800 hover:bg-gray-700 text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-md cursor-pointer"
-              >
-                Restart Studio Pipeline &or;
-              </button>
-            </div>
           </div>
-        )
-      }
-    </div >
+        </div>
+      )}
+    </div>
   );
 }

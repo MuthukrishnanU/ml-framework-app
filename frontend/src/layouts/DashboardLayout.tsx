@@ -14,7 +14,8 @@ export default function DashboardLayout() {
     setIsAuthenticated,
     setUsername,
     setUserRole,
-    setFullName
+    setFullName,
+    apiLoading
   } = useAppContext();
 
   const navigate = useNavigate();
@@ -114,8 +115,23 @@ export default function DashboardLayout() {
         </main>
       </div>
 
+      {/* Global API Loading Overlay */}
+      {apiLoading && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gray-950/70 backdrop-blur-sm">
+          <div className="relative w-14 h-14 flex items-center justify-center">
+            <div className="absolute inset-0 rounded-full border-4 border-axis-burgundy border-t-transparent animate-spin"></div>
+            <div className="w-9 h-9 rounded-full bg-axis-burgundy flex items-center justify-center text-white font-bold text-base">
+              A
+            </div>
+          </div>
+          <p className="mt-3 text-xs font-bold tracking-wider text-red-200 uppercase animate-pulse">
+            Processing Request...
+          </p>
+        </div>
+      )}
+
       {/* Corporate footer */}
-      <footer className={`py-4 px-6 text-center text-xs border-t transition-colors ${isDarkMode ? 'bg-gray-950 border-gray-900 text-gray-550' : 'bg-white border-gray-200 text-gray-550'}`}>
+      <footer className={`py-4 px-6 text-center text-xs border-t transition-colors ${isDarkMode ? 'bg-gray-950 border-gray-900 text-gray-555' : 'bg-white border-gray-200 text-gray-555'}`}>
         &copy; 2026 Bank Name Ltd. Model Governance & Risk Management Dashboard.
       </footer>
     </div>

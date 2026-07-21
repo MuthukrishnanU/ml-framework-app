@@ -922,6 +922,14 @@ class BasePullRequest(BaseModel):
     credit_score_min: int = 300
     gender: str = "All"
 
+class EventTaggingRequest(BaseModel):
+    auto_cure_enabled: bool = False
+    auto_cure_max_dpd: int = 0
+    roll_forward_enabled: bool = False
+    roll_forward_min_dpd: int = 30
+    money_collected_enabled: bool = False
+    money_collected_min_amount: float = 1000.0
+
 class FeatureReductionRequest(BaseModel):
     base_pull: BasePullRequest
     selected_features: list[str]
@@ -931,9 +939,17 @@ class TrainStepperRequest(BaseModel):
     algorithms: list[str]
     base_pull: BasePullRequest
     selected_features: list[str]
+    event_tagging: EventTaggingRequest = EventTaggingRequest()
     imputations: dict[str, str]
     hyperparameters: dict[str, dict[str, float]]
     split_ratio: float = 0.8
+
+class ApproveStudioModelRequest(BaseModel):
+    model_id: str
+    algorithm_type: str
+    approved_by: str = "ds_lead"
+    notes: str = ""
+    baselines: dict = {}
 
 @app.post("/api/segmentation/base_pull_preview")
 def post_base_pull_preview(payload: BasePullRequest):
@@ -947,7 +963,7 @@ def post_base_pull_preview(payload: BasePullRequest):
 @app.post("/api/ml/feature_reduction_preview")
 def post_feature_reduction_preview(payload: FeatureReductionRequest):
     try:
-        from backend.router import query_base_cohort_df, calculate_correlation_matrix
+        from backend.router import query_base_cohort_df, calculate_correlation_matrix, calculate_feature_clusters
         df = query_base_cohort_df(payload.base_pull.dict())
         
         missing_stats = {}
@@ -966,10 +982,12 @@ def post_feature_reduction_preview(payload: FeatureReductionRequest):
                 }
                 
         corr_data = calculate_correlation_matrix(df, payload.selected_features)
+        clusters_data = calculate_feature_clusters(df, payload.selected_features)
         
         return {
             "missing_stats": missing_stats,
-            "correlation_matrix": corr_data
+            "correlation_matrix": corr_data,
+            "feature_clusters": clusters_data
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -985,12 +1003,62 @@ def post_train_custom_stepper(payload: TrainStepperRequest):
             selected_features=payload.selected_features,
             imputations=payload.imputations,
             hyperparameters=payload.hyperparameters,
-            split_ratio=payload.split_ratio
+            split_ratio=payload.split_ratio,
+            event_tagging=payload.event_tagging.dict()
         )
         return {
             "scoreboard": scoreboard,
             "validation_curves": validation_curves
         }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/governance/approve_studio_model")
+def post_approve_studio_model(payload: ApproveStudioModelRequest):
+    try:
+        from backend.registry import load_registry, save_registry, log_audit
+        registry = load_registry()
+        
+        m_id = payload.model_id
+        registry["models"][m_id] = {
+            "model_id": m_id,
+            "algorithm_type": payload.algorithm_type,
+            "version": "v2.0-studio",
+            "status": "challenger",
+            "serving_path": "both",
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "hyperparameters": {},
+            "baselines": {
+                "roc_auc": payload.baselines.get("auc", 0.80),
+                "pr_auc": payload.baselines.get("pr_auc", 0.75),
+                "f1_score": 0.75,
+                "ks_statistic": payload.baselines.get("ks", 0.50),
+                "log_loss": 0.40,
+                "fairness": payload.baselines.get("fairness_adverse_impact_ratio", 0.95)
+            },
+            "live_metrics": {
+                "roc_auc": payload.baselines.get("auc", 0.80),
+                "pr_auc": payload.baselines.get("pr_auc", 0.75),
+                "f1_score": 0.75,
+                "ks_statistic": payload.baselines.get("ks", 0.50),
+                "log_loss": 0.40,
+                "psi": 0.01,
+                "latency": payload.baselines.get("latency_ms", 15.0),
+                "memory": 45.0,
+                "fairness": payload.baselines.get("fairness_adverse_impact_ratio", 0.95)
+            }
+        }
+        
+        log_audit(
+            payload.approved_by,
+            f"Studio Model {m_id} approved for Production Monitoring.",
+            f"Notes: {payload.notes}. Baseline ROC-AUC: {payload.baselines.get('auc', 0.80)}",
+            payload.approved_by
+        )
+        save_registry(registry)
+        return {"status": "success", "message": f"Model {m_id} successfully promoted to Challenger pool."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

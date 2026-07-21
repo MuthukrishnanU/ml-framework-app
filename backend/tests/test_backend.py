@@ -90,7 +90,7 @@ def test_api_models_list():
     data = response.json()
     assert "champion_id" in data
     assert "models" in data
-    assert len(data["models"]) == 6
+    assert len(data["models"]) >= 6
     # Check key columns present
     for model in data["models"]:
         assert "model_id" in model
@@ -116,3 +116,57 @@ def test_custom_features_pipeline():
     
     probs, labels = wrapper.predict(df)
     assert len(probs) == 100
+
+
+def test_approve_studio_model_endpoint():
+    """Verifies promoting a studio-trained model to the challenger pool in model registry."""
+    payload = {
+        "model_id": "test_studio_model_v1",
+        "algorithm_type": "XGBoost",
+        "approved_by": "test_admin",
+        "notes": "Unit test promotion",
+        "baselines": {"auc": 0.86, "pr_auc": 0.82, "ks": 0.55, "latency_ms": 12.0}
+    }
+    response = client.post("/api/governance/approve_studio_model", json=payload)
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+    
+    # Verify model is listed in /api/models
+    models_res = client.get("/api/models")
+    assert models_res.status_code == 200
+    model_ids = [m["model_id"] for m in models_res.json()["models"]]
+    assert "test_studio_model_v1" in model_ids
+
+
+def test_train_custom_stepper_endpoint():
+    """Verifies train_custom_stepper API endpoint."""
+    payload = {
+        "campaign": "credit_card",
+        "algorithms": ["logistic_regression", "xgboost"],
+        "base_pull": {
+            "age_min": 18,
+            "age_max": 85,
+            "income_min": 0,
+            "credit_score_min": 300,
+            "gender": "All"
+        },
+        "selected_features": ["age", "annual_income", "credit_score"],
+        "event_tagging": {
+            "auto_cure_enabled": False,
+            "auto_cure_max_dpd": 0,
+            "roll_forward_enabled": False,
+            "roll_forward_min_dpd": 30,
+            "money_collected_enabled": False,
+            "money_collected_min_amount": 1000
+        },
+        "imputations": {},
+        "hyperparameters": {},
+        "split_ratio": 0.8
+    }
+    response = client.post("/api/ml/train_custom_stepper", json=payload)
+    assert response.status_code == 200, f"Error: {response.text}"
+    data = response.json()
+    assert "scoreboard" in data
+    assert "validation_curves" in data
+
+

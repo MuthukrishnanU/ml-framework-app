@@ -400,6 +400,49 @@ def calculate_correlation_matrix(df: pd.DataFrame, columns: list) -> dict:
         return {"columns": [], "matrix": []}
 
 
+def calculate_feature_clusters(df: pd.DataFrame, columns: list) -> list:
+    """Groups correlated numeric columns into clusters using hierarchical linkage."""
+    if df.empty or len(columns) < 2:
+        return []
+    
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    valid_cols = [col for col in columns if col in df.columns and col in numeric_cols]
+    
+    if len(valid_cols) < 2:
+        return []
+        
+    try:
+        from scipy.cluster.hierarchy import linkage, fcluster
+        from scipy.spatial.distance import squareform
+        
+        corr = df[valid_cols].corr().abs().fillna(0.0).values
+        dist = np.clip(1.0 - corr, 0.0, 1.0)
+        np.fill_diagonal(dist, 0.0)
+        
+        condensed = squareform(dist, checks=False)
+        link = linkage(condensed, method='average')
+        labels = fcluster(link, t=0.5, criterion='distance')
+        
+        clusters_dict = {}
+        for col, cluster_id in zip(valid_cols, labels):
+            cid = int(cluster_id)
+            if cid not in clusters_dict:
+                clusters_dict[cid] = []
+            clusters_dict[cid].append(col)
+            
+        result = []
+        for cid, feat_list in clusters_dict.items():
+            result.append({
+                "cluster_id": cid,
+                "features": feat_list,
+                "representative": feat_list[0]
+            })
+        return result
+    except Exception as e:
+        print(f"Error calculating feature clusters: {e}")
+        return []
+
+
 def train_stepper_pipeline(
     campaign: str,
     algorithms: list,
@@ -407,9 +450,10 @@ def train_stepper_pipeline(
     selected_features: list,
     imputations: dict,
     hyperparameters: dict,
-    split_ratio: float
+    split_ratio: float,
+    event_tagging: dict = None
 ):
-    """Orchestrates custom model training with cohort filtering, feature selection, imputations, and hyperparameter tuning."""
+    """Orchestrates custom model training with cohort filtering, feature selection, event tagging, imputations, and hyperparameter tuning."""
     from sklearn.model_selection import train_test_split
     from sklearn.metrics import roc_curve, precision_recall_curve
     import time
@@ -419,7 +463,7 @@ def train_stepper_pipeline(
     if df.empty:
         raise ValueError("Selected cohort returned zero customer records.")
         
-    # 2. Map target y variable based on campaign
+    # 2. Map target y variable based on campaign & Event Tagging options
     campaign_norm = campaign.lower()
     if campaign_norm in ['credit_card', 'credit_card_propensity']:
         y = (df['is_conversion_successful'] == 1).astype(int)
@@ -435,6 +479,21 @@ def train_stepper_pipeline(
         y = (df['is_conversion_successful'].fillna(-1) == 1).astype(int)
     else:
         raise ValueError(f"Invalid campaign: {campaign}")
+
+    # Apply Event Tagging Overrides if configured
+    if event_tagging:
+        if event_tagging.get('auto_cure_enabled'):
+            max_dpd = event_tagging.get('auto_cure_max_dpd', 0)
+            cured_mask = (df['payment_delay_days'].fillna(0) <= max_dpd) & (df['late_payment_flag'].fillna(False) == False)
+            y[cured_mask] = 0
+        if event_tagging.get('roll_forward_enabled'):
+            min_dpd = event_tagging.get('roll_forward_min_dpd', 30)
+            rf_mask = df['payment_delay_days'].fillna(0) >= min_dpd
+            y[rf_mask] = 1
+        if event_tagging.get('money_collected_enabled'):
+            min_amt = event_tagging.get('money_collected_min_amount', 1000.0)
+            collected_mask = (df['monthly_spend'].fillna(0) >= min_amt) | (df['monthly_loan_emi'].fillna(0) >= min_amt)
+            y[collected_mask] = 1
         
     df['temp_target'] = y
     
@@ -487,6 +546,12 @@ def train_stepper_pipeline(
         
         start_time = time.time()
         try:
+            # Helper to sanitize non-JSON compliant floats (NaN / Inf)
+            def clean_float(v, default=0.0, decimals=4):
+                if v is None or pd.isnull(v) or np.isnan(v) or np.isinf(v):
+                    return float(default)
+                return round(float(v), decimals)
+
             # Instantiate model wrapper with custom features subset
             model_instance = create_model_wrapper(algo_name, model_id, features=final_features)
             
@@ -497,6 +562,10 @@ def train_stepper_pipeline(
                 # Handle pipeline nested estimator named step
                 if algo_name == "Logistic Regression" and hasattr(model_instance.model, "named_steps"):
                     target_estimator = model_instance.model.named_steps["logisticregression"]
+                elif algo_name == "Neural Network" and hasattr(model_instance.model, "named_steps"):
+                    target_estimator = model_instance.model.named_steps["mlpclassifier"]
+                elif algo_name == "Linear Regression" and hasattr(model_instance.model, "named_steps"):
+                    target_estimator = model_instance.model.named_steps["linearregression"]
                 
                 # Filter and cast parameter types safely
                 valid_params = {}
@@ -518,33 +587,40 @@ def train_stepper_pipeline(
             
             # Evaluate using base validation wrapper methods
             metrics = model_instance.evaluate(test_df, "temp_target")
-            auc = metrics.get("roc_auc", 0.5)
+            auc = clean_float(metrics.get("roc_auc", 0.5), 0.5, 4)
             
             probs, labels = model_instance.predict(test_df)
-            fair_ratio = model_instance.check_fairness(test_df, labels)
+            probs = np.nan_to_num(probs, nan=0.5, posinf=1.0, neginf=0.0)
+            fair_ratio = clean_float(model_instance.check_fairness(test_df, labels), 1.0, 4)
             
             scoreboard.append({
                 "model_id": model_id,
                 "algorithm_type": algo_name,
                 "version": "v2.0-studio",
                 "status": "Ready",
-                "auc": round(float(auc), 4),
-                "fairness_adverse_impact_ratio": round(float(fair_ratio), 4),
-                "latency_ms": round(float(latency), 2)
+                "auc": auc,
+                "fairness_adverse_impact_ratio": fair_ratio,
+                "latency_ms": clean_float(latency, 0.0, 2)
             })
             
             # Calculate validation curves
             y_test = test_df["temp_target"].to_numpy()
             
             # ROC Curve calculations
-            fpr_arr, tpr_arr, _ = roc_curve(y_test, probs)
-            indices = np.linspace(0, len(fpr_arr) - 1, 15, dtype=int)
-            roc_points = [{"fpr": round(float(fpr_arr[i]), 4), "tpr": round(float(tpr_arr[i]), 4)} for i in indices]
+            try:
+                fpr_arr, tpr_arr, _ = roc_curve(y_test, probs)
+                indices = np.linspace(0, len(fpr_arr) - 1, 15, dtype=int)
+                roc_points = [{"fpr": clean_float(fpr_arr[i], 0.0, 4), "tpr": clean_float(tpr_arr[i], 0.0, 4)} for i in indices]
+            except Exception:
+                roc_points = [{"fpr": 0.0, "tpr": 0.0}, {"fpr": 1.0, "tpr": 1.0}]
             
             # Precision-Recall Curve calculations
-            prec_arr, rec_arr, _ = precision_recall_curve(y_test, probs)
-            indices = np.linspace(0, len(prec_arr) - 1, 15, dtype=int)
-            pr_points = [{"recall": round(float(rec_arr[i]), 4), "precision": round(float(prec_arr[i]), 4)} for i in indices]
+            try:
+                prec_arr, rec_arr, _ = precision_recall_curve(y_test, probs)
+                indices = np.linspace(0, len(prec_arr) - 1, 15, dtype=int)
+                pr_points = [{"recall": clean_float(rec_arr[i], 0.0, 4), "precision": clean_float(prec_arr[i], 0.0, 4)} for i in indices]
+            except Exception:
+                pr_points = [{"recall": 0.0, "precision": 0.5}]
             
             # Risk Sloping calculations
             bins = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
@@ -557,11 +633,11 @@ def train_stepper_pipeline(
                 bin_count = int(np.sum(in_bin))
                 if bin_count > 0:
                     conversions = int(np.sum(y_test[in_bin] == 1))
-                    actual_rate = round(conversions / bin_count, 4)
-                    predicted_rate = round(float(np.mean(probs[in_bin])), 4)
+                    actual_rate = clean_float(conversions / bin_count, 0.0, 4)
+                    predicted_rate = clean_float(np.mean(probs[in_bin]), 0.0, 4)
                 else:
                     actual_rate = 0.0
-                    predicted_rate = round((b_min + b_max) / 2.0, 4)
+                    predicted_rate = clean_float((b_min + b_max) / 2.0, 0.0, 4)
                     
                 risk_points.append({
                     "bin": bin_labels[b_idx],
@@ -574,8 +650,8 @@ def train_stepper_pipeline(
                 "roc_curve": roc_points,
                 "pr_curve": pr_points,
                 "risk_sloping": risk_points,
-                "gini": round(float(2.0 * auc - 1.0), 4),
-                "ks": metrics.get("ks_statistic", 0.0)
+                "gini": clean_float(2.0 * auc - 1.0, 0.0, 4),
+                "ks": clean_float(metrics.get("ks_statistic", 0.0), 0.0, 4)
             }
             
         except Exception as e:
