@@ -51,7 +51,13 @@ def get_db_connection():
 
 def release_db_connection(conn):
     if connection_pool and conn:
-        connection_pool.putconn(conn)
+        try:
+            connection_pool.putconn(conn)
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 def init_db():
     """Drops and recreates the exactly 7 database tables, each with exactly 15 columns."""

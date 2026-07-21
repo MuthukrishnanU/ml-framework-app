@@ -60,6 +60,7 @@ export interface AlertCard {
 export interface DriftStats {
   simulation_history: SimulationHistory[];
   distribution_chart: DistributionChartItem[];
+  feature_drift?: any[];
   drift_active: boolean;
   alert_card: AlertCard | null;
 }

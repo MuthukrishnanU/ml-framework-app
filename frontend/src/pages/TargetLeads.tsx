@@ -45,8 +45,38 @@ export default function TargetLeads() {
     fetchLeadsData(selectedLeadProduct, leadPage, leadSearchDebounced, leadSortBy, leadSortOrder);
   }, [selectedLeadProduct, leadPage, leadSearchDebounced, leadSortBy, leadSortOrder]);
 
+  // Batch Scoring states
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchResult, setBatchResult] = useState<any>(null);
+  const [showBatchModal, setShowBatchModal] = useState(false);
+
+  const handleRunBatchScoring = async () => {
+    setBatchLoading(true);
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/api/predict/batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          product_type: selectedLeadProduct,
+          cohort_size: 500
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setBatchResult(data);
+        setShowBatchModal(true);
+        fetchLeadsData(selectedLeadProduct, leadPage, leadSearchDebounced, leadSortBy, leadSortOrder);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
   return (
     <div className={`p-6 rounded-2xl border ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'} space-y-6`}>
+      {/* Top Header & Search Filters */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold tracking-tight">Campaign Target Leads (Strong Customers)</h2>
@@ -64,7 +94,7 @@ export default function TargetLeads() {
             {leadSearchInput && (
               <button
                 onClick={() => setLeadSearchInput('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-450 hover:text-gray-300 font-bold px-1 text-sm leading-none"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-450 hover:text-gray-300 font-bold px-1 text-sm leading-none bg-transparent border-0 cursor-pointer"
               >
                 &times;
               </button>
@@ -83,6 +113,20 @@ export default function TargetLeads() {
             </select>
           </div>
         </div>
+      </div>
+
+      {/* Action Bar Line */}
+      <div className={`p-3 rounded-xl border flex items-center justify-between gap-4 ${isDarkMode ? 'bg-gray-950/40 border-gray-800' : 'bg-gray-50 border-gray-200'}`}>
+        <div className="flex items-center gap-2 text-xs font-medium text-gray-400">
+          <span>Target Cohort: <b className="text-axis-burgundy dark:text-red-400">{selectedLeadProduct}</b> ({leadTotal} records available)</span>
+        </div>
+        <button
+          onClick={handleRunBatchScoring}
+          disabled={batchLoading}
+          className="px-4 py-2 bg-axis-burgundy hover:bg-axis-burgundy-hover text-white text-xs font-bold rounded-lg shadow transition-all cursor-pointer disabled:opacity-40 border-0 flex items-center gap-2 shrink-0"
+        >
+          ⚡ {batchLoading ? 'Scoring Cohort...' : 'Run Batch Portfolio Scoring'}
+        </button>
       </div>
 
       {/* Leads Table */}
@@ -115,7 +159,7 @@ export default function TargetLeads() {
           <tbody className="divide-y divide-gray-200 dark:divide-gray-850">
             {leadData.length === 0 ? (
               <tr>
-                <td colSpan={leadColumns.length || 1} className="p-6 text-center text-gray-500">
+                <td colSpan={leadColumns.length || 1} className="p-6 text-center text-gray-550">
                   No matching leads found.
                 </td>
               </tr>
@@ -164,7 +208,7 @@ export default function TargetLeads() {
             <button
               onClick={() => setLeadPage(p => Math.max(1, p - 1))}
               disabled={leadPage === 1}
-              className="px-3 py-1.5 rounded-lg border bg-gray-800 hover:bg-gray-750 text-white text-xs disabled:opacity-40 transition-all font-semibold cursor-pointer"
+              className="px-3 py-1.5 rounded-lg border bg-gray-800 hover:bg-gray-750 text-white text-xs disabled:opacity-40 transition-all font-semibold cursor-pointer border-0"
             >
               Previous
             </button>
@@ -172,10 +216,35 @@ export default function TargetLeads() {
             <button
               onClick={() => setLeadPage(p => Math.min(Math.ceil(leadTotal / 100), p + 1))}
               disabled={leadPage >= Math.ceil(leadTotal / 100)}
-              className="px-3 py-1.5 rounded-lg border bg-gray-800 hover:bg-gray-750 text-white text-xs disabled:opacity-40 transition-all font-semibold cursor-pointer"
+              className="px-3 py-1.5 rounded-lg border bg-gray-800 hover:bg-gray-750 text-white text-xs disabled:opacity-40 transition-all font-semibold cursor-pointer border-0"
             >
               Next
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Batch Scoring Result Modal */}
+      {showBatchModal && batchResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/85 backdrop-blur-sm p-4">
+          <div className={`max-w-md w-full rounded-2xl border p-6 shadow-2xl space-y-4 ${isDarkMode ? 'bg-gray-900 border-gray-800 text-white' : 'bg-white border-gray-200 text-gray-900'}`}>
+            <div className="flex items-center justify-between border-b pb-3 border-gray-750">
+              <h3 className="text-sm font-bold">Batch Scoring Execution Completed</h3>
+              <button onClick={() => setShowBatchModal(false)} className="text-gray-400 hover:text-white font-bold text-xs bg-gray-800 border-0 px-2 py-1 rounded cursor-pointer">✕</button>
+            </div>
+            <div className="space-y-2 text-xs font-mono">
+              <div className="p-3 bg-green-950/40 border border-green-800 rounded-xl text-green-300">
+                ✓ Successfully scored <b>{batchResult.scored_count}</b> customer records!
+              </div>
+              <div className="p-3 bg-gray-950/40 rounded-xl border border-gray-800 space-y-1">
+                <div>Campaign Target: <span className="font-bold text-gray-200">{batchResult.product_type}</span></div>
+                <div>Average Propensity Score: <span className="font-bold text-axis-burgundy dark:text-red-400">{batchResult.average_propensity_score}</span></div>
+                <div>Audit Log Status: <span className="font-bold text-green-400">Logged to Predictions & Audit DB</span></div>
+              </div>
+            </div>
+            <div className="flex justify-end pt-2">
+              <button onClick={() => setShowBatchModal(false)} className="px-4 py-2 bg-axis-burgundy text-white text-xs font-bold rounded-lg border-0 cursor-pointer">Close</button>
+            </div>
           </div>
         </div>
       )}

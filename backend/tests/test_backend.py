@@ -170,3 +170,50 @@ def test_train_custom_stepper_endpoint():
     assert "validation_curves" in data
 
 
+def test_feature_drift_endpoint():
+    """Verifies feature-level PSI breakdown array in drift endpoint."""
+    response = client.get("/api/monitoring/drift")
+    assert response.status_code == 200
+    data = response.json()
+    assert "feature_drift" in data
+    assert len(data["feature_drift"]) >= 5
+    for feat in data["feature_drift"]:
+        assert "feature_name" in feat
+        assert "psi" in feat
+        assert "status" in feat
+
+
+def test_traffic_split_endpoint():
+    """Verifies traffic split API endpoint."""
+    payload = {
+        "mode": "ab_split",
+        "champion_ratio": 0.8,
+        "challenger_ratio": 0.2,
+        "selected_challenger_id": "cat_model_v1.0"
+    }
+    response = client.post("/api/governance/traffic_split", json=payload)
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+
+
+def test_rollback_endpoint():
+    """Verifies Champion rollback API endpoint."""
+    response = client.post("/api/governance/rollback", json={})
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+
+
+def test_batch_predict_endpoint():
+    """Verifies bulk portfolio batch prediction endpoint."""
+    payload = {
+        "product_type": "credit_card_history",
+        "cohort_size": 25
+    }
+    response = client.post("/api/predict/batch", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["scored_count"] == 25
+
+
+
