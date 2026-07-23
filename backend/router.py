@@ -339,6 +339,12 @@ def query_base_cohort_df(filters: dict) -> pd.DataFrame:
         if "gender" in filters and filters["gender"] not in ["All", None]:
             where_clauses.append("d.gender = %s")
             params.append(filters["gender"])
+        if "start_date" in filters and filters["start_date"]:
+            where_clauses.append("p.timestamp >= %s")
+            params.append(filters["start_date"])
+        if "end_date" in filters and filters["end_date"]:
+            where_clauses.append("p.timestamp <= %s")
+            params.append(filters["end_date"])
             
         where_str = ""
         if where_clauses:

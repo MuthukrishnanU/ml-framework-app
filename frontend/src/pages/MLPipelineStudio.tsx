@@ -16,14 +16,18 @@ export default function MLPipelineStudio() {
     age_max: 85,
     income_min: 0,
     credit_score_min: 300,
-    gender: 'All'
+    gender: 'All',
+    start_date: '2026-01-01',
+    end_date: '2026-12-31'
   });
   const [formFilters, setFormFilters] = useState({
     age_min: 18,
     age_max: 85,
     income_min: 0,
     credit_score_min: 300,
-    gender: 'All'
+    gender: 'All',
+    start_date: '2026-01-01',
+    end_date: '2026-12-31'
   });
   const [submitDisabled, setSubmitDisabled] = useState<boolean>(false);
   const [basePullLoading, setBasePullLoading] = useState<boolean>(false);
@@ -169,7 +173,9 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
       age_max: parseInt(String(formFilters.age_max || 85), 10),
       income_min: parseFloat(String(formFilters.income_min || 0)),
       credit_score_min: parseInt(String(formFilters.credit_score_min || 300), 10),
-      gender: formFilters.gender
+      gender: formFilters.gender,
+      start_date: formFilters.start_date,
+      end_date: formFilters.end_date
     };
     try {
       const res = await apiFetch(`${API_BASE_URL}/api/segmentation/base_pull_preview`, {
@@ -501,6 +507,36 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
                 <option value="Male">Male</option>
                 <option value="Female">Female</option>
               </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-gray-450 block">Observation Window (Start & End Date)</label>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <span className="text-[10px] text-gray-500 block mb-0.5">Start Date</span>
+                  <input
+                    type="date"
+                    value={formFilters.start_date}
+                    onChange={(e) => {
+                      setFormFilters(prev => ({ ...prev, start_date: e.target.value }));
+                      setSubmitDisabled(false);
+                    }}
+                    className={`w-full px-2.5 py-1.5 text-xs rounded border focus:outline-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
+                  />
+                </div>
+                <div>
+                  <span className="text-[10px] text-gray-500 block mb-0.5">End Date</span>
+                  <input
+                    type="date"
+                    value={formFilters.end_date}
+                    onChange={(e) => {
+                      setFormFilters(prev => ({ ...prev, end_date: e.target.value }));
+                      setSubmitDisabled(false);
+                    }}
+                    className={`w-full px-2.5 py-1.5 text-xs rounded border focus:outline-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
+                  />
+                </div>
+              </div>
             </div>
 
             <button

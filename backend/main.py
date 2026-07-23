@@ -2,6 +2,7 @@ import os
 import hashlib
 import random
 import uuid
+from typing import Optional, Dict, List, Any
 from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -1058,6 +1059,8 @@ class BasePullRequest(BaseModel):
     income_min: float = 0.0
     credit_score_min: int = 300
     gender: str = "All"
+    start_date: str = ""
+    end_date: str = ""
 
 class EventTaggingRequest(BaseModel):
     auto_cure_enabled: bool = False
