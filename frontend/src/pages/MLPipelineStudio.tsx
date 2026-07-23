@@ -164,16 +164,24 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
   // Submit demographic filters manually
   const handleSubmitFilters = async () => {
     setBasePullLoading(true);
+    const cleanedFilters = {
+      age_min: parseInt(String(formFilters.age_min || 18), 10),
+      age_max: parseInt(String(formFilters.age_max || 85), 10),
+      income_min: parseFloat(String(formFilters.income_min || 0)),
+      credit_score_min: parseInt(String(formFilters.credit_score_min || 300), 10),
+      gender: formFilters.gender
+    };
     try {
       const res = await apiFetch(`${API_BASE_URL}/api/segmentation/base_pull_preview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formFilters)
+        body: JSON.stringify(cleanedFilters)
       });
       if (res.ok) {
         const data = await res.json();
         setPipelineBaseCount(data.count);
-        setPipelineBaseFilters(formFilters);
+        setPipelineBaseFilters(cleanedFilters);
+        setFormFilters(cleanedFilters);
         setSubmitDisabled(true);
       }
     } catch (e) {
@@ -379,21 +387,39 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
               <label className="text-xs font-semibold text-gray-450 block">Age Range (Years)</label>
               <div className="flex gap-4 items-center">
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
                   value={formFilters.age_min}
                   onChange={(e) => {
-                    setFormFilters(prev => ({ ...prev, age_min: Math.max(18, parseInt(e.target.value || '18', 10)) }));
-                    setSubmitDisabled(false);
+                    const val = e.target.value;
+                    if (val === '' || /^\d*$/.test(val)) {
+                      setFormFilters(prev => ({ ...prev, age_min: val as any }));
+                      setSubmitDisabled(false);
+                    }
+                  }}
+                  onBlur={() => {
+                    const parsed = parseInt(String(formFilters.age_min), 10);
+                    const clamped = isNaN(parsed) ? 18 : Math.max(18, Math.min(100, parsed));
+                    setFormFilters(prev => ({ ...prev, age_min: clamped }));
                   }}
                   className={`w-20 px-2 py-1 text-xs rounded border focus:outline-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
                 />
                 <span className="text-gray-500">to</span>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
                   value={formFilters.age_max}
                   onChange={(e) => {
-                    setFormFilters(prev => ({ ...prev, age_max: Math.min(100, parseInt(e.target.value || '100', 10)) }));
-                    setSubmitDisabled(false);
+                    const val = e.target.value;
+                    if (val === '' || /^\d*$/.test(val)) {
+                      setFormFilters(prev => ({ ...prev, age_max: val as any }));
+                      setSubmitDisabled(false);
+                    }
+                  }}
+                  onBlur={() => {
+                    const parsed = parseInt(String(formFilters.age_max), 10);
+                    const clamped = isNaN(parsed) ? 85 : Math.max(18, Math.min(100, parsed));
+                    setFormFilters(prev => ({ ...prev, age_max: clamped }));
                   }}
                   className={`w-20 px-2 py-1 text-xs rounded border focus:outline-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
                 />
@@ -403,11 +429,20 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-gray-450 block">Minimum Annual Income (₹)</label>
               <input
-                type="number"
+                type="text"
+                inputMode="numeric"
                 value={formFilters.income_min}
                 onChange={(e) => {
-                  setFormFilters(prev => ({ ...prev, income_min: parseFloat(e.target.value || '0') }));
-                  setSubmitDisabled(false);
+                  const val = e.target.value;
+                  if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                    setFormFilters(prev => ({ ...prev, income_min: val as any }));
+                    setSubmitDisabled(false);
+                  }
+                }}
+                onBlur={() => {
+                  const parsed = parseFloat(String(formFilters.income_min));
+                  const clamped = isNaN(parsed) ? 0 : Math.max(0, parsed);
+                  setFormFilters(prev => ({ ...prev, income_min: clamped }));
                 }}
                 className={`w-full px-3 py-1.5 text-xs rounded border focus:outline-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
               />
@@ -417,18 +452,20 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
               <div className="flex justify-between items-center">
                 <label className="text-xs font-semibold text-gray-450">Minimum Credit Score</label>
                 <input
-                  type="number"
-                  min="300"
-                  max="850"
+                  type="text"
+                  inputMode="numeric"
                   value={formFilters.credit_score_min}
                   onChange={(e) => {
-                    const parsed = parseInt(e.target.value, 10);
-                    setFormFilters(prev => ({ ...prev, credit_score_min: isNaN(parsed) ? 300 : parsed }));
-                    setSubmitDisabled(false);
+                    const val = e.target.value;
+                    if (val === '' || /^\d*$/.test(val)) {
+                      setFormFilters(prev => ({ ...prev, credit_score_min: val as any }));
+                      setSubmitDisabled(false);
+                    }
                   }}
-                  onBlur={(e) => {
-                    const val = Math.max(300, Math.min(850, parseInt(e.target.value || '300', 10)));
-                    setFormFilters(prev => ({ ...prev, credit_score_min: val }));
+                  onBlur={() => {
+                    const parsed = parseInt(String(formFilters.credit_score_min), 10);
+                    const clamped = isNaN(parsed) ? 300 : Math.max(300, Math.min(850, parsed));
+                    setFormFilters(prev => ({ ...prev, credit_score_min: clamped }));
                   }}
                   className={`w-16 px-2 py-0.5 text-xs text-right rounded border focus:outline-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
                 />
@@ -437,7 +474,7 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
                 type="range"
                 min="300"
                 max="850"
-                value={formFilters.credit_score_min}
+                value={formFilters.credit_score_min || 300}
                 onChange={(e) => {
                   setFormFilters(prev => ({ ...prev, credit_score_min: parseInt(e.target.value, 10) }));
                   setSubmitDisabled(false);
