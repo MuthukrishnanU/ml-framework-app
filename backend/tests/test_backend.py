@@ -216,4 +216,91 @@ def test_batch_predict_endpoint():
     assert data["scored_count"] == 25
 
 
+def test_rule_engine_endpoints():
+    """Verifies rule evaluation and monthly bucket run endpoints."""
+    # Test list rule models (20 capacity)
+    response = client.get("/api/rules/list")
+    assert response.status_code == 200
+    data = response.json()
+    assert "rule_models" in data
+    assert len(data["rule_models"]) >= 20
+
+    # Test rule evaluation
+    rule_payload = {
+        "model_id": "rule_test_01",
+        "model_name": "Test Delinquency Rule",
+        "rule_config": {
+            "logic": "AND",
+            "conditions": [
+                {"feature": "annual_income", "operator": ">=", "value": 50000},
+                {"feature": "payment_delay_days", "operator": "<=", "value": 5}
+            ]
+        }
+    }
+    response = client.post("/api/rules/evaluate", json=rule_payload)
+    assert response.status_code == 200
+    res = response.json()
+    assert "total_evaluated" in res
+    assert "matched_count" in res
+    assert "monthly_dpd_buckets" in res
+
+
+def test_feature_store_endpoints():
+    """Verifies feature store connectors and SQL compiler endpoints."""
+    # Test connectors list
+    response = client.get("/api/feature_store/connectors")
+    assert response.status_code == 200
+    data = response.json()
+    assert "connectors" in data
+    assert "templates" in data
+    assert len(data["connectors"]) >= 3
+
+    # Test template SQL execution
+    payload = {
+        "sql_template": "SELECT d.customer_id, d.age, d.annual_income FROM demographics d WHERE {{COHORT_FILTERS}};",
+        "filters": {"age_min": 21, "age_max": 65, "income_min": 25000, "credit_score_min": 600, "gender": "All"}
+    }
+    response = client.post("/api/feature_store/execute_sql", json=payload)
+    assert response.status_code == 200
+    res = response.json()
+    assert "compiled_sql" in res
+    assert "d.age BETWEEN 21 AND 65" in res["compiled_sql"]
+
+
+def test_migration_and_uat_endpoints():
+    """Verifies bulk migration manifest import and UAT test suite execution."""
+    manifest = {
+        "models": {
+            "xgb_migrated_test": {
+                "model_id": "xgb_migrated_test",
+                "algorithm_type": "XGBoost",
+                "version": "1.0.0",
+                "status": "migrated",
+                "baselines": {"roc_auc": 0.85},
+                "live_metrics": {"latency": 15.0}
+            }
+        },
+        "rule_models": {
+            "rule_migrated_test": {
+                "model_id": "rule_migrated_test",
+                "model_name": "Migrated Test Rule",
+                "rule_config": {"logic": "AND", "conditions": [{"feature": "age", "operator": ">=", "value": 21}]},
+                "performance_summary": {"gini": 0.55}
+            }
+        }
+    }
+    import_res = client.post("/api/migration/import_manifest", json=manifest)
+    assert import_res.status_code == 200
+    assert import_res.json()["imported_ml"] == 1
+    assert import_res.json()["imported_rules"] == 1
+
+    uat_res = client.get("/api/migration/run_uat?target=all")
+    assert uat_res.status_code == 200
+    uat_data = uat_res.json()
+    assert "summary" in uat_data
+    assert uat_data["summary"]["total_tested"] >= 30
+    assert uat_data["summary"]["pass_rate"] > 0.0
+
+
+
 

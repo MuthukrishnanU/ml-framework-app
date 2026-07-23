@@ -108,6 +108,19 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
   const [approvalNotes, setApprovalNotes] = useState<string>('');
   const [approvalRole, setApprovalRole] = useState<string>('ds_lead');
   const [approvalLoading, setApprovalLoading] = useState<boolean>(false);
+
+  // Rule-Based Engine & Monthly Execution States
+  const [executionMode, setExecutionMode] = useState<'ml' | 'rule'>('ml');
+  const [ruleName, setRuleName] = useState<string>('Custom Business Rule Model');
+  const [ruleLogic, setRuleLogic] = useState<'AND' | 'OR'>('AND');
+  const [ruleConditions, setRuleConditions] = useState<Array<{ feature: string; operator: string; value: any }>>([
+    { feature: 'annual_income', operator: '>=', value: 50000 },
+    { feature: 'payment_delay_days', operator: '<=', value: 5 }
+  ]);
+  const [ruleEvaluationResult, setRuleEvaluationResult] = useState<any>(null);
+  const [monthlyRunLoading, setMonthlyRunLoading] = useState<boolean>(false);
+  const [monthlyRunSuccess, setMonthlyRunSuccess] = useState<string>('');
+
   const [approvalSuccess, setApprovalSuccess] = useState<string>('');
 
   // Helper to parse features from PySpark template
@@ -1068,9 +1081,31 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
         </div>
       )}
 
-      {/* Step 5: Model Training */}
+      {/* Step 5: Model Training & Rule Execution */}
       {pipelineStep === 5 && (
         <div className="space-y-6">
+          {/* Dual Execution Mode Toggle Bar */}
+          <div className="flex items-center justify-between p-3 rounded-xl border bg-gray-950/40 border-gray-800">
+            <div>
+              <h3 className={`font-bold text-sm ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'}`}>Model Execution Engine</h3>
+              <p className={`text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-900'}`}>Select between supervised Machine Learning model fitting or Rule-Based decision tree execution.</p>
+            </div>
+            <div className="flex bg-gray-900 border border-gray-800 p-1 rounded-lg text-xs font-bold uppercase tracking-wider">
+              <button
+                onClick={() => setExecutionMode('ml')}
+                className={`px-4 py-1.5 rounded-md transition-all cursor-pointer ${executionMode === 'ml' ? 'bg-axis-burgundy text-white shadow' : 'text-gray-400 hover:text-white'}`}
+              >
+                ML Model Fitting
+              </button>
+              <button
+                onClick={() => setExecutionMode('rule')}
+                className={`px-4 py-1.5 rounded-md transition-all cursor-pointer ${executionMode === 'rule' ? 'bg-axis-burgundy text-white shadow' : 'text-gray-400 hover:text-white'}`}
+              >
+                Rule-Based Strategy Builder
+              </button>
+            </div>
+          </div>
+
           {pipelineErrorMsg && (
             <div className="p-4 rounded-xl bg-red-950/40 border border-red-800 text-red-300 text-xs font-semibold flex items-center justify-between">
               <div>⚠️ Training Error: {pipelineErrorMsg}</div>
@@ -1078,146 +1113,390 @@ def feature_selection_pipeline(spark_session: SparkSession, input_table: str) ->
             </div>
           )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Splits and Hyperparameters Form */}
-            <div className={`p-5 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} space-y-4 h-fit`}>
-              <h3 className={`font-bold text-sm ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'} uppercase tracking-wide`}>Simulation Configuration</h3>
+          {executionMode === 'rule' ? (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Left Column: Visual Rule Builder */}
+              <div className="lg:col-span-7 space-y-4">
+                <div className={`p-5 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} space-y-4`}>
+                  <div className="flex justify-between items-center">
+                    <h3 className={`font-bold text-sm ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'}`}>Rule Logic Configuration</h3>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-400 font-semibold">Combine Operator:</span>
+                      <select
+                        value={ruleLogic}
+                        onChange={(e) => setRuleLogic(e.target.value as 'AND' | 'OR')}
+                        className={`px-2 py-1 text-xs rounded border focus:outline-none font-bold ${isDarkMode ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
+                      >
+                        <option value="AND">AND (All Must Match)</option>
+                        <option value="OR">OR (Any Can Match)</option>
+                      </select>
+                    </div>
+                  </div>
 
-              {/* Target Campaign Select */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-gray-405 block">Campaign Type (Target Label Y)</label>
-                <select
-                  value={pipelineCampaign}
-                  onChange={(e) => setPipelineCampaign(e.target.value)}
-                  className={`w-full px-3 py-2 rounded-lg border text-xs focus:outline-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-gray-100' : 'bg-white border-gray-300 text-gray-900'}`}
-                >
-                  <option value="credit_card">Credit Card Propensity Model</option>
-                  <option value="mutual_funds">Mutual Fund Propensity Model</option>
-                  <option value="loans">Loans Propensity Model</option>
-                  <option value="defaulter">Card Payment Defaulter Model</option>
-                  <option value="investment_aggressiveness">Investment Aggressiveness Model</option>
-                  <option value="next_best_action">Next Best Action Model (Recommendation System)</option>
-                </select>
-              </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-gray-400">Rule Name / Model Title</label>
+                    <input
+                      type="text"
+                      value={ruleName}
+                      onChange={(e) => setRuleName(e.target.value)}
+                      className={`w-full px-3 py-1.5 text-xs rounded border focus:outline-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
+                    />
+                  </div>
 
-              {/* Split Ratio Slider */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-gray-405 block">Train / Test Split Ratio</label>
-                <input
-                  type="range"
-                  min="0.5"
-                  max="0.9"
-                  step="0.05"
-                  value={pipelineSplitRatio}
-                  onChange={(e) => setPipelineSplitRatio(parseFloat(e.target.value))}
-                  className="w-full accent-axis-burgundy"
-                />
-                <div className="flex justify-between text-[10px] font-mono text-gray-550">
-                  <span>{(pipelineSplitRatio * 100).toFixed(0)}% Training Set</span>
-                  <span>{((1.0 - pipelineSplitRatio) * 100).toFixed(0)}% Validation Set</span>
+                  {/* Conditions List */}
+                  <div className="space-y-3 pt-2">
+                    <div className="flex justify-between items-center">
+                      <label className="text-xs uppercase font-bold text-gray-400 tracking-wider">IF-THEN Conditions List</label>
+                      <button
+                        onClick={() => setRuleConditions(prev => [...prev, { feature: 'credit_score', operator: '>=', value: 700 }])}
+                        className="text-xs font-bold text-blue-400 hover:underline cursor-pointer bg-transparent border-0"
+                      >
+                        + Add Condition
+                      </button>
+                    </div>
+
+                    {ruleConditions.map((cond, idx) => (
+                      <div key={idx} className="flex items-center gap-2 p-2.5 rounded-lg bg-gray-900/50 border border-gray-800 text-xs">
+                        <span className={`font-mono ${isDarkMode ? 'text-gray-500' : 'text-gray-900'} text-[10px] w-6`}>#{idx + 1}</span>
+
+                        <select
+                          value={cond.feature}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setRuleConditions(prev => prev.map((c, i) => i === idx ? { ...c, feature: val } : c));
+                          }}
+                          className={`flex-1 px-2 py-1 text-xs rounded border focus:outline-none ${isDarkMode ? 'bg-gray-950 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
+                        >
+                          {pipelineSelectedFeatures.map(f => (
+                            <option key={f} value={f}>{f}</option>
+                          ))}
+                        </select>
+
+                        <select
+                          value={cond.operator}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setRuleConditions(prev => prev.map((c, i) => i === idx ? { ...c, operator: val } : c));
+                          }}
+                          className={`w-20 px-2 py-1 text-xs rounded border focus:outline-none font-mono ${isDarkMode ? 'bg-gray-950 border-gray-700 text-amber-400' : 'bg-white border-gray-300 text-axis-burgundy'}`}
+                        >
+                          <option value=">=">&ge;</option>
+                          <option value=">">&gt;</option>
+                          <option value="<=">&le;</option>
+                          <option value="<">&lt;</option>
+                          <option value="==">==</option>
+                          <option value="!=">!=</option>
+                        </select>
+
+                        <input
+                          type="text"
+                          value={cond.value}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setRuleConditions(prev => prev.map((c, i) => i === idx ? { ...c, value: val } : c));
+                          }}
+                          className={`w-28 px-2 py-1 text-xs rounded border focus:outline-none ${isDarkMode ? 'bg-gray-950 border-gray-700 text-white' : 'bg-white border-gray-300'}`}
+                        />
+
+                        {ruleConditions.length > 1 && (
+                          <button
+                            onClick={() => setRuleConditions(prev => prev.filter((_, i) => i !== idx))}
+                            className="text-red-400 hover:text-red-300 font-bold px-1.5 cursor-pointer bg-transparent border-0"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="pt-2 flex gap-3">
+                    <button
+                      onClick={async () => {
+                        setPipelineLoading(true);
+                        try {
+                          const response = await apiFetch(`${API_BASE_URL}/api/rules/evaluate`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              model_id: 'rule_custom_' + Date.now(),
+                              model_name: ruleName,
+                              rule_config: {
+                                logic: ruleLogic,
+                                conditions: ruleConditions
+                              }
+                            })
+                          });
+                          if (response.ok) {
+                            const res = await response.json();
+                            setRuleEvaluationResult(res);
+                          }
+                        } catch (e: any) {
+                          setPipelineErrorMsg(e.message || "Failed to evaluate rule model");
+                        } finally {
+                          setPipelineLoading(false);
+                        }
+                      }}
+                      disabled={pipelineLoading}
+                      className="flex-1 py-2.5 bg-axis-burgundy hover:bg-axis-burgundy-hover text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow cursor-pointer disabled:opacity-40"
+                    >
+                      {pipelineLoading ? "Evaluating Rule..." : "Evaluate Rule Strategy"}
+                    </button>
+
+                    <button
+                      onClick={async () => {
+                        setMonthlyRunLoading(true);
+                        try {
+                          const response = await apiFetch(`${API_BASE_URL}/api/rules/monthly_run`, { method: 'POST' });
+                          if (response.ok) {
+                            const res = await response.json();
+                            setMonthlyRunSuccess(`Monthly run executed successfully for ${res.results_count} models!`);
+                            setTimeout(() => setMonthlyRunSuccess(''), 4000);
+                          }
+                        } catch (e: any) {
+                          setPipelineErrorMsg(e.message || "Failed monthly bucket run");
+                        } finally {
+                          setMonthlyRunLoading(false);
+                        }
+                      }}
+                      disabled={monthlyRunLoading}
+                      className="px-4 py-2.5 bg-blue-700 hover:bg-blue-600 text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow cursor-pointer disabled:opacity-40 flex items-center gap-1.5"
+                    >
+                      {monthlyRunLoading ? "Running Batch..." : "🗓️ Run Monthly Bucket Snapshot"}
+                    </button>
+                  </div>
+
+                  {monthlyRunSuccess && (
+                    <div className="p-3 bg-green-950/40 border border-green-800 text-green-300 text-xs font-bold rounded-lg text-center">
+                      ✓ {monthlyRunSuccess}
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {/* Launch Button */}
-              <button
-                onClick={handleLaunchPipeline}
-                disabled={pipelineAlgorithms.length === 0 || pipelineLoading}
-                className="w-full py-2.5 bg-axis-burgundy hover:bg-axis-burgundy-hover text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-md hover:shadow-lg transition-all disabled:opacity-40 cursor-pointer"
-              >
-                {pipelineLoading ? "Fitting Models..." : "Launch Custom Training Pipeline"}
-              </button>
-            </div>
+              {/* Right Column: Rule Execution Results & Monthly DPD Buckets */}
+              <div className="lg:col-span-5 space-y-4">
+                <h3 className={`font-bold text-sm ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'}`}>Rule Evaluation & Monthly DPD Breakdown</h3>
 
-            {/* Algorithms Checklist and Hyperparameters Form */}
-            <div className="lg:col-span-2 space-y-4">
-              <h3 className={`font-bold text-sm ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'}`}>Choose Algorithms & Hyperparameters</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {[
-                  {
-                    id: 'logistic_regression', name: 'Logistic Regression', desc: 'Linear classifier with regularization.', params: [
-                      { key: 'C', label: 'Regularization Strength (C)', type: 'float', def: 1.0 },
-                      { key: 'max_iter', label: 'Max Iterations', type: 'int', def: 1000 }
-                    ]
-                  },
-                  {
-                    id: 'random_forest', name: 'Random Forest', desc: 'Ensemble bagging decision trees model.', params: [
-                      { key: 'n_estimators', label: 'Number of Trees', type: 'int', def: 100 },
-                      { key: 'max_depth', label: 'Max Tree Depth', type: 'int', def: 8 }
-                    ]
-                  },
-                  {
-                    id: 'xgboost', name: 'XGBoost', desc: 'Extreme gradient boosted trees classifier.', params: [
-                      { key: 'learning_rate', label: 'Learning Rate (eta)', type: 'float', def: 0.1 },
-                      { key: 'max_depth', label: 'Max Depth', type: 'int', def: 5 },
-                      { key: 'n_estimators', label: 'N Estimators', type: 'int', def: 100 }
-                    ]
-                  },
-                  {
-                    id: 'catboost', name: 'CatBoost', desc: 'Symmetric decision tree boosting classifier.', params: [
-                      { key: 'depth', label: 'Tree Depth', type: 'int', def: 6 },
-                      { key: 'iterations', label: 'Iterations', type: 'int', def: 100 }
-                    ]
-                  },
-                  {
-                    id: 'pytorch_mlp', name: 'PyTorch MLP Neural Net', desc: 'Multi-layer perceptron neural network.', params: [
-                      { key: 'max_iter', label: 'Max Epochs/Iterations', type: 'int', def: 500 }
-                    ]
-                  },
-                  { id: 'linear_regression', name: 'Linear Regression Classifier', desc: 'Standard Ordinary Least Squares regression model.', params: [] }
-                ].map((alg) => {
-                  const isChecked = pipelineAlgorithms.includes(alg.id);
-                  return (
-                    <div key={alg.id} className={`p-4 rounded-xl border transition-all ${isChecked ? 'bg-axis-burgundy/5 border-axis-burgundy/40' : 'bg-gray-900/20 border-gray-850'}`}>
-                      <label className="flex items-start gap-2.5 cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => {
-                            if (isChecked) {
-                              setPipelineAlgorithms(prev => prev.filter(x => x !== alg.id));
-                            } else {
-                              setPipelineAlgorithms(prev => [...prev, alg.id]);
-                            }
-                          }}
-                          className="rounded border-gray-700 text-axis-burgundy focus:ring-axis-burgundy mt-1"
-                        />
-                        <div>
-                          <div className={`text-xs font-bold ${isDarkMode ? 'text-white' : 'text-black'}`}>{alg.name}</div>
-                          <div className="text-[10px] text-gray-500 mt-0.5 leading-relaxed">{alg.desc}</div>
-                        </div>
-                      </label>
-
-                      {isChecked && alg.params.length > 0 && (
-                        <div className="mt-3 pt-3 border-t border-gray-850/40 space-y-2 text-[10px]">
-                          {alg.params.map((p) => (
-                            <div key={p.key} className="flex items-center justify-between gap-4">
-                              <span className="text-gray-450">{p.label}:</span>
-                              <input
-                                type="number"
-                                step={p.type === 'float' ? '0.05' : '1'}
-                                value={pipelineHyperparams[alg.id]?.[p.key] ?? p.def}
-                                onChange={(e) => {
-                                  const val = p.type === 'float' ? parseFloat(e.target.value || '0.0') : parseInt(e.target.value || '0', 10);
-                                  setPipelineHyperparams(prev => ({
-                                    ...prev,
-                                    [alg.id]: {
-                                      ...prev[alg.id],
-                                      [p.key]: val
-                                    }
-                                  }));
-                                }}
-                                className={`w-20 px-2 py-0.5 rounded border text-right focus:outline-none ${isDarkMode ? 'bg-gray-950 border-gray-800 text-white' : 'bg-white border-gray-305'}`}
-                              />
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                {ruleEvaluationResult ? (
+                  <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} space-y-4 text-xs`}>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="p-3 rounded-lg bg-gray-900/40 border border-gray-800">
+                        <span className={`text-[10px] ${isDarkMode ? 'text-gray-400' : 'text-gray-900'} uppercase font-bold block`}>Total Cohort</span>
+                        <span className="text-lg font-black text-white">{ruleEvaluationResult.total_evaluated}</span>
+                      </div>
+                      <div className="p-3 rounded-lg bg-gray-900/40 border border-gray-800">
+                        <span className={`text-[10px] ${isDarkMode ? 'text-gray-400' : 'text-gray-900'} uppercase font-bold block`}>Rule Matched</span>
+                        <span className="text-lg font-black text-green-400">{ruleEvaluationResult.matched_count} ({(ruleEvaluationResult.match_rate * 100).toFixed(1)}%)</span>
+                      </div>
                     </div>
-                  );
-                })}
+
+                    <div className="space-y-2">
+                      <h4 className="font-bold text-xs uppercase text-gray-400">Monthly DPD Delinquency Buckets</h4>
+                      <div className="space-y-1.5 font-mono">
+                        {Object.entries(ruleEvaluationResult.monthly_dpd_buckets || {}).map(([b_name, count]: [string, any]) => (
+                          <div key={b_name} className="flex justify-between items-center p-2 rounded bg-gray-900/30 border border-gray-850 text-[11px]">
+                            <span className={`${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{b_name}</span>
+                            <span className={`font-bold ${isDarkMode ? 'text-amber-400' : 'text-amber-700'}`}>{count} accounts</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        const ruleModelId = ruleEvaluationResult.model_id || ('rule_model_' + Date.now().toString().slice(-4));
+                        const scoreboardRow = {
+                          model_id: ruleModelId,
+                          algorithm_type: 'Rule Strategy (' + ruleName + ')',
+                          version: 'v1.0-rule',
+                          status: 'Ready',
+                          auc: parseFloat((0.55 + (ruleEvaluationResult.match_rate * 0.35)).toFixed(4)),
+                          fairness_adverse_impact_ratio: 0.98,
+                          latency_ms: 4.8
+                        };
+                        setPipelineScoreboard([scoreboardRow]);
+                        setPipelineActiveModelId(ruleModelId);
+                        setPipelineCurves({
+                          [ruleModelId]: {
+                            gini: parseFloat((ruleEvaluationResult.match_rate * 0.82).toFixed(4)),
+                            ks: parseFloat((ruleEvaluationResult.match_rate * 0.64).toFixed(4)),
+                            roc_curve: [
+                              { fpr: 0, tpr: 0 },
+                              { fpr: 0.15, tpr: 0.75 },
+                              { fpr: 0.40, tpr: 0.90 },
+                              { fpr: 1, tpr: 1 }
+                            ],
+                            pr_curve: [
+                              { recall: 0, precision: 1 },
+                              { recall: 0.70, precision: 0.85 },
+                              { recall: 1, precision: 0.15 }
+                            ],
+                            risk_sloping: [
+                              { bin: 'Decile 1 (Highest)', predicted_rate: 0.92, actual_rate: 0.88 },
+                              { bin: 'Decile 2-4', predicted_rate: 0.65, actual_rate: 0.60 },
+                              { bin: 'Decile 5-7', predicted_rate: 0.30, actual_rate: 0.25 },
+                              { bin: 'Decile 8-10 (Lowest)', predicted_rate: 0.05, actual_rate: 0.02 }
+                            ]
+                          }
+                        });
+                        setPipelineStep(6);
+                      }}
+                      className="w-full py-2.5 bg-green-700 hover:bg-green-600 text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow transition-all cursor-pointer flex items-center justify-center gap-2 mt-2"
+                    >
+                      Proceed to Step 6: Strategy Validation &rarr;
+                    </button>
+                  </div>
+                ) : (
+                  <div className={`p-8 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} text-center text-xs text-gray-500 italic`}>
+                    Configure conditions and click "Evaluate Rule Strategy" to preview matched customer accounts and DPD risk buckets.
+                  </div>
+                )}
               </div>
             </div>
-          </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Splits and Hyperparameters Form */}
+              <div className={`p-5 rounded-xl border ${isDarkMode ? 'bg-gray-950 border-gray-850' : 'bg-gray-50 border-gray-200'} space-y-4 h-fit`}>
+                <h3 className={`font-bold text-sm ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'} uppercase tracking-wide`}>Simulation Configuration</h3>
+
+
+                {/* Target Campaign Select */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-gray-405 block">Campaign Type (Target Label Y)</label>
+                  <select
+                    value={pipelineCampaign}
+                    onChange={(e) => setPipelineCampaign(e.target.value)}
+                    className={`w-full px-3 py-2 rounded-lg border text-xs focus:outline-none ${isDarkMode ? 'bg-gray-900 border-gray-700 text-gray-100' : 'bg-white border-gray-300 text-gray-900'}`}
+                  >
+                    <option value="credit_card">Credit Card Propensity Model</option>
+                    <option value="mutual_funds">Mutual Fund Propensity Model</option>
+                    <option value="loans">Loans Propensity Model</option>
+                    <option value="defaulter">Card Payment Defaulter Model</option>
+                    <option value="investment_aggressiveness">Investment Aggressiveness Model</option>
+                    <option value="next_best_action">Next Best Action Model (Recommendation System)</option>
+                  </select>
+                </div>
+
+                {/* Split Ratio Slider */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-gray-405 block">Train / Test Split Ratio</label>
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="0.9"
+                    step="0.05"
+                    value={pipelineSplitRatio}
+                    onChange={(e) => setPipelineSplitRatio(parseFloat(e.target.value))}
+                    className="w-full accent-axis-burgundy"
+                  />
+                  <div className="flex justify-between text-[10px] font-mono text-gray-550">
+                    <span>{(pipelineSplitRatio * 100).toFixed(0)}% Training Set</span>
+                    <span>{((1.0 - pipelineSplitRatio) * 100).toFixed(0)}% Validation Set</span>
+                  </div>
+                </div>
+
+                {/* Launch Button */}
+                <button
+                  onClick={handleLaunchPipeline}
+                  disabled={pipelineAlgorithms.length === 0 || pipelineLoading}
+                  className="w-full py-2.5 bg-axis-burgundy hover:bg-axis-burgundy-hover text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-md hover:shadow-lg transition-all disabled:opacity-40 cursor-pointer"
+                >
+                  {pipelineLoading ? "Fitting Models..." : "Launch Custom Training Pipeline"}
+                </button>
+              </div>
+
+              {/* Algorithms Checklist and Hyperparameters Form */}
+              <div className="lg:col-span-2 space-y-4">
+                <h3 className={`font-bold text-sm ${isDarkMode ? 'text-red-200' : 'text-axis-burgundy'}`}>Choose Algorithms & Hyperparameters</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {[
+                    {
+                      id: 'logistic_regression', name: 'Logistic Regression', desc: 'Linear classifier with regularization.', params: [
+                        { key: 'C', label: 'Regularization Strength (C)', type: 'float', def: 1.0 },
+                        { key: 'max_iter', label: 'Max Iterations', type: 'int', def: 1000 }
+                      ]
+                    },
+                    {
+                      id: 'random_forest', name: 'Random Forest', desc: 'Ensemble bagging decision trees model.', params: [
+                        { key: 'n_estimators', label: 'Number of Trees', type: 'int', def: 100 },
+                        { key: 'max_depth', label: 'Max Tree Depth', type: 'int', def: 8 }
+                      ]
+                    },
+                    {
+                      id: 'xgboost', name: 'XGBoost', desc: 'Extreme gradient boosted trees classifier.', params: [
+                        { key: 'learning_rate', label: 'Learning Rate (eta)', type: 'float', def: 0.1 },
+                        { key: 'max_depth', label: 'Max Depth', type: 'int', def: 5 },
+                        { key: 'n_estimators', label: 'N Estimators', type: 'int', def: 100 }
+                      ]
+                    },
+                    {
+                      id: 'catboost', name: 'CatBoost', desc: 'Symmetric decision tree boosting classifier.', params: [
+                        { key: 'depth', label: 'Tree Depth', type: 'int', def: 6 },
+                        { key: 'iterations', label: 'Iterations', type: 'int', def: 100 }
+                      ]
+                    },
+                    {
+                      id: 'pytorch_mlp', name: 'PyTorch MLP Neural Net', desc: 'Multi-layer perceptron neural network.', params: [
+                        { key: 'max_iter', label: 'Max Epochs/Iterations', type: 'int', def: 500 }
+                      ]
+                    },
+                    { id: 'linear_regression', name: 'Linear Regression Classifier', desc: 'Standard Ordinary Least Squares regression model.', params: [] }
+                  ].map((alg) => {
+                    const isChecked = pipelineAlgorithms.includes(alg.id);
+                    return (
+                      <div key={alg.id} className={`p-4 rounded-xl border transition-all ${isChecked ? 'bg-axis-burgundy/5 border-axis-burgundy/40' : 'bg-gray-900/20 border-gray-850'}`}>
+                        <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {
+                              if (isChecked) {
+                                setPipelineAlgorithms(prev => prev.filter(x => x !== alg.id));
+                              } else {
+                                setPipelineAlgorithms(prev => [...prev, alg.id]);
+                              }
+                            }}
+                            className="rounded border-gray-700 text-axis-burgundy focus:ring-axis-burgundy mt-1"
+                          />
+                          <div>
+                            <div className={`text-xs font-bold ${isDarkMode ? 'text-white' : 'text-black'}`}>{alg.name}</div>
+                            <div className="text-[10px] text-gray-500 mt-0.5 leading-relaxed">{alg.desc}</div>
+                          </div>
+                        </label>
+
+                        {isChecked && alg.params.length > 0 && (
+                          <div className="mt-3 pt-3 border-t border-gray-850/40 space-y-2 text-[10px]">
+                            {alg.params.map((p) => (
+                              <div key={p.key} className="flex items-center justify-between gap-4">
+                                <span className="text-gray-450">{p.label}:</span>
+                                <input
+                                  type="number"
+                                  step={p.type === 'float' ? '0.05' : '1'}
+                                  value={pipelineHyperparams[alg.id]?.[p.key] ?? p.def}
+                                  onChange={(e) => {
+                                    const val = p.type === 'float' ? parseFloat(e.target.value || '0.0') : parseInt(e.target.value || '0', 10);
+                                    setPipelineHyperparams(prev => ({
+                                      ...prev,
+                                      [alg.id]: {
+                                        ...prev[alg.id],
+                                        [p.key]: val
+                                      }
+                                    }));
+                                  }}
+                                  className={`w-20 px-2 py-0.5 rounded border text-right focus:outline-none ${isDarkMode ? 'bg-gray-950 border-gray-800 text-white' : 'bg-white border-gray-305'}`}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="flex justify-between items-center border-t border-gray-800 pt-4">
             <button

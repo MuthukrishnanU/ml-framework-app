@@ -108,11 +108,12 @@ class ScoreRequest(BaseModel):
 
 @app.on_event("startup")
 def startup_event():
-    # Dynamically bootstrap the observability table on start
+    # Dynamically bootstrap the observability table and framework tables on start
     try:
         init_observability_db()
+        init_framework_tables()
     except Exception as e:
-        print(f"Error initializing observability logs table on startup: {e}")
+        print(f"Error initializing observability or framework tables on startup: {e}")
         
     # Warm up and train the models on startup in a background thread 
     # to prevent blocking the port binding health checks
@@ -183,8 +184,8 @@ def get_models():
     
     # Calculate ranks based on baseline ROC-AUC and PR-AUC
     # We sort copies of the list and assign rankings
-    auc_sorted = sorted(models, key=lambda x: x["baselines"]["roc_auc"], reverse=True)
-    pr_sorted = sorted(models, key=lambda x: x["baselines"]["pr_auc"], reverse=True)
+    auc_sorted = sorted(models, key=lambda x: x.get("baselines", {}).get("roc_auc", 0.70), reverse=True)
+    pr_sorted = sorted(models, key=lambda x: x.get("baselines", {}).get("pr_auc", 0.70), reverse=True)
     
     for model in models:
         model_id = model["model_id"]
@@ -690,7 +691,10 @@ def get_db_table(table_name: str, page: int = 1, page_size: int = 100, search: s
     import decimal
     from datetime import date, datetime
     
-    allowed_tables = ['demographics', 'credit_card_history', 'investment_profiles', 'loan_details', 'predictions']
+    allowed_tables = [
+        'demographics', 'credit_card_history', 'investment_profiles', 'loan_details', 'predictions',
+        'rule_models', 'feature_store_connectors', 'migration_manifests', 'uat_results', 'users', 'api_audit_logs'
+    ]
     if table_name not in allowed_tables:
         raise HTTPException(status_code=400, detail="Invalid or restricted table name.")
         
@@ -1155,11 +1159,16 @@ def post_approve_studio_model(payload: ApproveStudioModelRequest):
         registry = load_registry()
         
         m_id = payload.model_id
-        registry["models"][m_id] = {
+        is_rule = m_id.startswith("rule_") or "Rule Strategy" in payload.algorithm_type
+        target_key = "rule_models" if is_rule else "models"
+        
+        registry[target_key][m_id] = {
             "model_id": m_id,
+            "model_name": payload.algorithm_type,
             "algorithm_type": payload.algorithm_type,
             "version": "v2.0-studio",
             "status": "challenger",
+            "model_category": "Rule" if is_rule else "ML",
             "serving_path": "both",
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "hyperparameters": {},
@@ -1195,10 +1204,93 @@ def post_approve_studio_model(payload: ApproveStudioModelRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# ==================== NEW ENDPOINTS: RULE ENGINE, FEATURE STORE & MIGRATION ====================
+
+@app.get("/api/rules/list")
+def get_rule_models():
+    """Returns all 20 rule-based models and their execution metadata."""
+    registry = load_registry()
+    rule_models = list(registry.get("rule_models", {}).values())
+    return {"rule_models": rule_models}
+
+@app.post("/api/rules/evaluate")
+def evaluate_rule(payload: dict = Body(default={})):
+    """Evaluates a rule config on training dataset and returns metrics."""
+    from backend.rules import RuleEngine
+    from backend.router import load_training_data
+    df = load_training_data()
+    if df.empty:
+        raise HTTPException(status_code=400, detail="Database is empty")
+    res = RuleEngine.execute_rule_model(df, payload or {})
+    return res
+
+@app.post("/api/rules/monthly_run")
+def trigger_monthly_rule_execution():
+    """Triggers batch monthly bucket execution across all rule models."""
+    from backend.rules import RuleEngine
+    registry = load_registry()
+    rule_models = list(registry.get("rule_models", {}).values())
+    results = RuleEngine.run_monthly_bucket_execution(rule_models)
+    
+    # Update audit log
+    log_audit("monthly_scheduler", f"Monthly bucket execution completed for {len(results)} rule models.", "DPD bucket snapshots updated.")
+    return {"status": "success", "results_count": len(results), "execution_summary": results}
+
+@app.get("/api/feature_store/connectors")
+def get_feature_store_connectors():
+    """Returns available Feature Store connection settings and templates."""
+    from backend.feature_store import FeatureStoreManager
+    return {
+        "connectors": FeatureStoreManager.DEFAULT_CONNECTORS,
+        "templates": FeatureStoreManager.DEFAULT_TEMPLATES
+    }
+
+@app.post("/api/feature_store/execute_sql")
+def execute_template_sql(payload: dict = Body(...)):
+    """Compiles and executes a dynamic feature store SQL template query."""
+    from backend.feature_store import FeatureStoreManager
+    template_sql = payload.get("sql_template", "")
+    filters = payload.get("filters", {})
+    selected_features = payload.get("selected_features", [])
+    
+    compiled_sql = FeatureStoreManager.compile_template_sql(template_sql, filters, selected_features)
+    df = FeatureStoreManager.execute_feature_pull(compiled_sql)
+    
+    return {
+        "compiled_sql": compiled_sql,
+        "row_count": len(df),
+        "columns": list(df.columns) if not df.empty else [],
+        "preview_data": df.head(10).to_dict(orient="records") if not df.empty else []
+    }
+
+@app.post("/api/migration/import_manifest")
+def import_manifest(payload: dict = Body(...)):
+    """Imports a bulk migration manifest containing ML and Rule-based models."""
+    from backend.registry import import_migration_manifest
+    res = import_migration_manifest(payload)
+    return res
+
+@app.get("/api/migration/run_uat")
+def run_uat_suite_endpoint(target: str = "all"):
+    """Executes automated UAT assertion suite against registered ML and Rule models."""
+    from backend.registry import run_uat_suite
+    results = run_uat_suite(target)
+    pass_count = sum(1 for r in results if r["status"] == "PASS")
+    fail_count = sum(1 for r in results if r["status"] == "FAIL")
+    return {
+        "summary": {
+            "total_tested": len(results),
+            "passed": pass_count,
+            "failed": fail_count,
+            "pass_rate": round(pass_count / max(1, len(results)), 4)
+        },
+        "details": results
+    }
 
 # Serve static frontend files if built (production mode)
 from fastapi.staticfiles import StaticFiles
 frontend_dist_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../frontend/dist"))
 if os.path.exists(frontend_dist_path):
     app.mount("/", StaticFiles(directory=frontend_dist_path, html=True), name="frontend")
+
 

@@ -272,13 +272,156 @@ def init_observability_db():
         if conn:
             conn.rollback()
         print(f"Error initializing observability logs database: {e}")
+def init_framework_tables():
+    """Initializes the 4 framework tables in Neon PostgreSQL (rule_models, feature_store_connectors, migration_manifests, uat_results)."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # 1. rule_models
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS rule_models (
+                model_id VARCHAR(100) PRIMARY KEY,
+                model_name VARCHAR(255) NOT NULL,
+                category VARCHAR(50),
+                target_product VARCHAR(50),
+                execution_frequency VARCHAR(50),
+                status VARCHAR(50),
+                logic_operator VARCHAR(10),
+                rule_conditions TEXT,
+                performance_summary TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        
+        # 2. feature_store_connectors
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS feature_store_connectors (
+                connector_id VARCHAR(100) PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                store_type VARCHAR(50),
+                host VARCHAR(255),
+                database_name VARCHAR(100),
+                status VARCHAR(50),
+                tables_list TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        
+        # 3. migration_manifests
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS migration_manifests (
+                manifest_id SERIAL PRIMARY KEY,
+                imported_by VARCHAR(100),
+                imported_ml_count INT,
+                imported_rules_count INT,
+                manifest_content TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        
+        # 4. uat_results
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS uat_results (
+                uat_id SERIAL PRIMARY KEY,
+                model_id VARCHAR(100),
+                model_type VARCHAR(50),
+                algorithm_or_rule VARCHAR(100),
+                assertion_check TEXT,
+                metric_value TEXT,
+                status VARCHAR(20),
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        
+        conn.commit()
+        print("Framework database tables (rule_models, feature_store_connectors, migration_manifests, uat_results) initialized in Neon PostgreSQL.")
+        
+        # Populate initial seed data into Neon tables if empty
+        sync_framework_data_to_postgres(conn)
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print(f"Error initializing framework database tables: {e}")
     finally:
         if conn:
+            release_db_connection(conn)
+
+def sync_framework_data_to_postgres(conn=None):
+    """Populates seed data into rule_models and feature_store_connectors Neon PostgreSQL tables."""
+    should_close = False
+    if conn is None:
+        try:
+            conn = get_db_connection()
+            should_close = True
+        except Exception as e:
+            print(f"Could not connect to sync framework data: {e}")
+            return
+            
+    try:
+        import json
+        from backend.registry import load_registry
+        from backend.feature_store import FeatureStoreManager
+        
+        cur = conn.cursor()
+        
+        # 1. Sync rule_models
+        cur.execute("SELECT COUNT(*) FROM rule_models;")
+        if cur.fetchone()[0] == 0:
+            reg = load_registry()
+            rule_models = reg.get("rule_models", {})
+            for r_id, r_data in rule_models.items():
+                cur.execute("""
+                    INSERT INTO rule_models (model_id, model_name, category, target_product, execution_frequency, status, logic_operator, rule_conditions, performance_summary)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (model_id) DO NOTHING;
+                """, (
+                    r_id,
+                    r_data.get("model_name", r_id),
+                    r_data.get("category", "General"),
+                    r_data.get("target_product", "Credit Card"),
+                    r_data.get("execution_frequency", "Monthly Bucket-Wise"),
+                    r_data.get("status", "Active"),
+                    r_data.get("rule_config", {}).get("logic", "AND"),
+                    json.dumps(r_data.get("rule_config", {}).get("conditions", [])),
+                    json.dumps(r_data.get("performance_summary", {}))
+                ))
+            print(f"Populated {len(rule_models)} rule models into Neon PostgreSQL `rule_models` table.")
+            
+        # 2. Sync feature_store_connectors
+        cur.execute("SELECT COUNT(*) FROM feature_store_connectors;")
+        if cur.fetchone()[0] == 0:
+            connectors = FeatureStoreManager.DEFAULT_CONNECTORS
+            for c in connectors:
+                cur.execute("""
+                    INSERT INTO feature_store_connectors (connector_id, name, store_type, host, database_name, status, tables_list)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (connector_id) DO NOTHING;
+                """, (
+                    c["connector_id"],
+                    c["name"],
+                    c["store_type"],
+                    c["host"],
+                    c["database"],
+                    c["status"],
+                    ", ".join(c["tables"])
+                ))
+            print(f"Populated {len(connectors)} connectors into Neon PostgreSQL `feature_store_connectors` table.")
+            
+        conn.commit()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print(f"Error syncing framework data to Neon: {e}")
+    finally:
+        if should_close and conn:
             release_db_connection(conn)
 
 if __name__ == "__main__":
     # Test initialization
     try:
         init_db()
+        init_framework_tables()
     except Exception as e:
         print(f"Test run failed: {e}")

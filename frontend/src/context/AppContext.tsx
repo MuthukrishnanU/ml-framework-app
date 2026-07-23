@@ -153,8 +153,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       headers.set('X-User-Name', localStorage.getItem('username') || 'anonymous');
       headers.set('X-User-Role', localStorage.getItem('userRole') || 'guest');
     }
+    if (options?.body && typeof options.body === 'string' && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
+    const targetUrl = url.startsWith('/') ? `${API_BASE_URL}${url}` : url;
     try {
-      return await fetch(url, { ...options, headers });
+      return await fetch(targetUrl, { ...options, headers });
     } finally {
       setApiLoading(false);
     }

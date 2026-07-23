@@ -82,6 +82,10 @@ export default function TableExplorer() {
               <option value="investment_profiles">investment_profiles</option>
               <option value="loan_details">loan_details</option>
               <option value="predictions">predictions</option>
+              <option value="rule_models">rule_models</option>
+              <option value="feature_store_connectors">feature_store_connectors</option>
+              <option value="migration_manifests">migration_manifests</option>
+              <option value="uat_results">uat_results</option>
             </select>
           </div>
         </div>

@@ -72,8 +72,14 @@ def train_and_cache_all_models():
         
     print(f"Training models on {len(train_df)} labeled customer profiles...")
     
+    VALID_ML_ALGOS = ["XGBoost", "CatBoost", "Random Forest", "PyTorch MLP", "Neural Network", "Logistic Regression", "Linear Regression"]
+    
     for model_id, meta in models_metadata.items():
-        algo_name = meta["algorithm_type"]
+        algo_name = meta.get("algorithm_type", "")
+        # Bypass Rule-Based strategies and non-ML candidate models during startup fitting
+        if meta.get("model_category") == "Rule" or model_id.startswith("rule_") or "Rule Strategy" in algo_name or algo_name not in VALID_ML_ALGOS:
+            continue
+            
         print(f"Training {algo_name} wrapper ({model_id})...")
         try:
             wrapper = create_model_wrapper(algo_name, model_id)
